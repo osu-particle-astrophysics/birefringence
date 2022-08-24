@@ -28,9 +28,10 @@
 //#include "raytracing_tools.h"                                                                                                                                    
 //#include "IceRayTracing-master/IceRayTracing.h"
 #include "TLegend.h"
-#include "birefringence.hh"
+
 
 using namespace std;
+#include "birefringence.hh"
 
 const double PI=3.1415926;
 const double CLIGHT=3.E8;

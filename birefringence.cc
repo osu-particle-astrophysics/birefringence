@@ -1,3 +1,13 @@
+double getV(vector<double> nvec) {
+
+  double alpha=nvec[0];
+  double beta=nvec[1];
+  double gamma=nvec[2];
+
+  //  return 90.-acos(sqrt((gamma*gamma)*(beta*beta-alpha*alpha)/((beta*beta)*(gamma*gamma-alpha*alpha)  )))*DEGRAD;
+  return 90.-acos(((gamma*gamma)*(beta*beta-alpha*alpha)/((beta*beta)*(gamma*gamma-alpha*alpha)  )))*DEGRAD;
+
+}
 void thetastoEpsilons(double thetaE_e1_Sclock,double thetaE_e2_Sclock,
 		      double &epsilon1,double &epsilon2) {
 
@@ -378,11 +388,10 @@ double getDeltaN(int BIAXIAL,vector<double> nvec,TVector3 rhat,double angle_icef
 
   double theta_initial=atan2( B , A - C )/2.; // not sure this is rotated in the right direction - check this.                                                     
 
-
+  //  double lambda2=(1.*(M+R)+sqrt((M-R)*(M-R)+4*P*Q))/2.;
+  //double lambda1=(1.*(M+R)-sqrt((M-R)*(M-R)+4*P*Q))/2.;
 
   // these are only the n's for the scenario where the plane arrives straight from above, a test scenario                                                          
-  //double lambda2=(1.*(M+R)+sqrt((M-R)*(M-R)+4*P*Q))/2.;
-  //double lambda1=(1.*(M+R)-sqrt((M-R)*(M-R)+4*P*Q))/2.;
   //double ne2=sqrt(-1./lambda2);
   //double ne1=sqrt(-1./lambda1);
 
