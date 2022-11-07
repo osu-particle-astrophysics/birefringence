@@ -1,3 +1,40 @@
+TVector3 getkfromS(TVector3 S,vector<double> nvec) {
+
+  S.SetMag(1.);
+
+  TVector3 k;
+
+  TVector3 epsilon(nvec[0]*nvec[0],nvec[1]*nvec[1],nvec[2]*nvec[2]);
+  TVector3 epsilonS(epsilon[0]*S[0],epsilon[1]*S[1],epsilon[2]*S[2]);
+  double magofepsilonS=epsilonS.Mag();
+
+  TVector3 inverseepsilon(1./epsilon[0],1./epsilon[1],1./epsilon[2]);
+
+  k.SetX(inverseepsilon[0]*S[0]);
+  k.SetY(inverseepsilon[1]*S[1]);
+  k.SetZ(inverseepsilon[2]*S[2]);
+
+  k=magofepsilonS*k;
+
+  return k;
+
+}
+TVector3 getSfromk(TVector3 k,vector<double> nvec) {
+
+  k.SetMag(1.);
+
+  TVector3 S;
+
+  TVector3 epsilon(nvec[0]*nvec[0],nvec[1]*nvec[1],nvec[2]*nvec[2]);
+  TVector3 epsilonk(epsilon[0]*k[0],epsilon[1]*k[1],epsilon[2]*k[2]);
+  
+  S=epsilonk;
+
+  S.SetMag(1.);
+
+  return S;
+
+}
 double getV(vector<double> nvec) {
 
   double alpha=nvec[0];

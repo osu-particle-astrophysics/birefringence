@@ -21,4 +21,5 @@ void getAnglesontheClock(TVector3 rhat_thisstep1, TVector3 rhat_thisstep2,
 void thetastoEpsilons(double thetaE_e1_Sclock,double thetaE_e2_Sclock,
 		      double &epsilon1,double &epsilon2); // converts angles on the clock to epsilon angles (relative to 12 o'clock and 3 o'clock)
 double getV(vector<double> nvec);
-
+TVector3 getkfromS(TVector3 S,vector<double> nvec);
+TVector3 getSfromk(TVector3 k,vector<double> nvec);
