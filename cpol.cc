@@ -29,7 +29,7 @@
 #include "TVector2.h"
 //#include "units.h"
 //#include "raytracing_tools.h"
-#include "IceRayTracing-master/IceRayTracing.h"
+#include "IceRayTracing/IceRayTracing.C"
 #include "TLegend.h"
 #include "birefringence.hh"
 
@@ -663,138 +663,10 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
   vector<double> n3vec;
   std::vector<double>  vV; // the special angle V
 
-  int NDEPTHS_NS=81;
-
-  string stemp;
-  double thisdepth,thisn;
-  double firstn1, firstn2, firstn3;  //record the first ones so that if we are using a constant indicatrix we can use them for all depths.
-  //start my first attempt at a function, I was kind of struggling to turn on my c++ brain here, so I tried to comment through what I think everything does
-  void birefringenceFileRead(n1file, n2file, n3file){ //reads in data from n1file, n2file, n3file inta a callable function
-    
-    //moved these variables in the function-should they be in or out?
-    int NDEPTHS_NS=81;
-
-    string stemp;
-    double thisdepth,thisn; //double here is defining the data type
-    double firstn1, firstn2, firstn3;
-
-    n1file >> stemp; //pipes data from n1file into the 'stemp' string, in order to manipulate it
-    for (int i=0;i<NDEPTHS_NS;i++) {//starting value is zero, must be less than the NDEPTHS_NS value(currently 81), loop through each value
-      n1file >> thisdepth >> thisn;//for each value of i, pipe into the 'thisn' list
-      vdepths_n1.push_back(-1.*thisdepth);//inserts new values to the vdepths_n1 vector based off depth 
-      n1vec.push_back(thisn);//adds these values from the n1file to the n1vec variable!
-     }
-    n2file >> stemp;//brings the data from n2file into stemp
-    for (int i=0;i<NDEPTHS_NS;i++) {//loops through this data
-      n2file >> thisdepth >> thisn;//piping into thisn
-      vdepths_n2.push_back(-1.*thisdepth);
-      if (BIAXIAL==1)//
-	n2vec.push_back(thisn);//adds our data into thisn for certain properties
-      else if (BIAXIAL==0 || BIAXIAL==-1)
-	n2vec.push_back(n1vec[i]);//adds data into n1vec? little confused on this part 
-
-    }
-    n3file >> stemp; //n3file data into our stemp file!
-    for (int i=0;i<NDEPTHS_NS;i++) {//same loop as for n1 and n2
-      n3file >> thisdepth >> thisn;//from here below, same stuff as the last one for different biaxial values
-      vdepths_n3.push_back(-1.*thisdepth);
-      if (BIAXIAL==0 || BIAXIAL==1)
-	n3vec.push_back(thisn);
-      else if (BIAXIAL==-1)
-	n3vec.push_back(n1vec[i]+1.E-5); // the 1.E-5 is so the eigenvectors don't just go in completely random directions                    
-
-    }
-    if (CONSTANTINDICATRIX==1) {//defines the first values for the vectors, bit confused on how contantindicatrix is decided; where does optarg come from?
-      firstn1=n1vec[0];
-      firstn2=n2vec[0];
-      firstn3=n3vec[0];
-
-      int thissize=(int)n1vec.size();//length of vector
-
-      //empties the vectors
-      n1vec.clear();
-      n2vec.clear();
-      n3vec.clear();
-      
-      //adds the first values to the vectors
-      for (int i=0;i<thissize;i++) {//why do we need a loop?
-	n1vec.push_back(firstn1);
-	n2vec.push_back(firstn2);
-	n3vec.push_back(firstn3);
-      }
-
-    }
-
-    cout << "sizes are " << n1vec.size() << "\t" << n2vec.size() << "\t" << n3vec.size() << "\n";
-    cout << "n's are \n";
-    for (int i=0;i<NDEPTHS_NS;i++) {
-      cout << "n1, n2, n3 are " << n1vec[i] << "\t" << n2vec[i] << "\t" << n3vec[i] << "\n";
-    }//output the lengths and a list of vector components--won't they all be the same value though?????
-  } //Do I need to do any more editing this code? As far as I understand what's happening this makes sense as a function and this matches the end of my function--might need to check spacing
-
+  birefringenceFileRead(n1file, n2file, n3file, stemp, thisn, thisdepth, firstn1, firstn2, firstn3, 81)
+ 
   // smooth them.
-  void smoothVecs(n1vec,n2vec,n3vec){ //wrap the smooth code with a function, input being n1vec,n2vec,n3vec
-    vector<double> tmp;
-    tmp.resize(n1vec.size());
-    int NSMOOTH=5;
-    int min=(int)(((double)NSMOOTH)/2.);
-    for (int i=0;i<min;i++) {
-      tmp[i]=n1vec[i];
-    }
-    for (int i=n1vec.size()-(NSMOOTH-min);i<n1vec.size();i++) {
-      tmp[i]=n1vec[i];
-    }
-    for (int i=min;i<n1vec.size()-(NSMOOTH-min);i++) {
-      double tmpdouble=0.;
-      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-	tmpdouble+=n1vec[j];
-      }
-      tmpdouble=tmpdouble/(double)NSMOOTH;
-      tmp[i]=tmpdouble;
-    }
-    n1vec=tmp;
-
-    tmp.clear();
-    tmp.resize(n2vec.size());
- 
-    min=(int)(((double)NSMOOTH)/2.);
-    for (int i=0;i<min;i++) {
-      tmp[i]=n2vec[i];
-    }
-    for (int i=n2vec.size()-(NSMOOTH-min);i<n2vec.size();i++) {
-      tmp[i]=n2vec[i];
-    }
-    for (int i=min;i<n2vec.size()-(NSMOOTH-min);i++) {
-      double tmpdouble=0.;
-      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-	tmpdouble+=n2vec[j];
-      }
-      tmpdouble=tmpdouble/(double)NSMOOTH;
-      tmp[i]=tmpdouble;
-    }
-    n2vec=tmp;
-
-    tmp.clear();
-    tmp.resize(n3vec.size());
- 
-    min=(int)(((double)NSMOOTH)/2.);
-    for (int i=0;i<min;i++) {
-      tmp[i]=n3vec[i];
-    }
-    for (int i=n3vec.size()-(NSMOOTH-min);i<n3vec.size();i++) {
-      tmp[i]=n3vec[i];
-    }
-    for (int i=min;i<n3vec.size()-(NSMOOTH-min);i++) {
-      double tmpdouble=0.;
-      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-	tmpdouble+=n3vec[j];
-      }
-      tmpdouble=tmpdouble/(double)NSMOOTH;
-      tmp[i]=tmpdouble;
-    }
-    n3vec=tmp;
-  }//end smoothing function
-
+  smoothVecs(n1vec,n2vec,n3vec)
 
   TGraph *gn1=new TGraph(n1vec.size(),&vdepths_n1[0],&n1vec[0]);
   TGraph *gn2=new TGraph(n2vec.size(),&vdepths_n2[0],&n2vec[0]);
@@ -803,9 +675,10 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
 
   vector<double> nvec_tmp;
   nvec_tmp.resize(3);
-  //v angle func
-  void VAngle(nvec_tmp) {
 
+  //v angle func
+  void VAngle(vdepths_n1,vdepths_n2,vdepths_n3) {
+v
     for (int i=0;i<n1vec.size();i++) {
     nvec_tmp[0]=gn1->Eval(vdepths_n1[i]);
     nvec_tmp[1]=gn2->Eval(vdepths_n2[i]);
@@ -815,7 +688,7 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
   } //end func
 
   //find angle v, make function setVVector?, make graph
-  void makeGraph(){
+  TGraph makeGraph(){
 
     g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
 

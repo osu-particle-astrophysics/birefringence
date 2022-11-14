@@ -680,3 +680,123 @@ double getDeltaN(int BIAXIAL,vector<double> nvec,TVector3 rhat,double angle_icef
   return deltan;
   
 }
+//start Maya's functions 
+void birefringenceFileRead(ifstream n1file,ifstream n2file,ifstream n3file, string stemp, double thisn, double thisdepth, double firstn1, double firstn2, double firstn3, int NDEPTHS_NS ){ //reads in data from n1file, n2file, n3file inta a callable function
+
+    n1file >> stemp;
+    for (int i=0;i<NDEPTHS_NS;i++) {
+      n1file >> thisdepth >> thisn;
+      vdepths_n1.push_back(-1.*thisdepth); 
+      n1vec.push_back(thisn);
+     }
+    n2file >> stemp;
+    for (int i=0;i<NDEPTHS_NS;i++) {//loops through this data
+      n2file >> thisdepth >> thisn;//piping into thisn
+      vdepths_n2.push_back(-1.*thisdepth);
+      if (BIAXIAL==1)//
+	n2vec.push_back(thisn);//adds our data into thisn for certain properties
+      else if (BIAXIAL==0 || BIAXIAL==-1)
+	n2vec.push_back(n1vec[i]);//adds data into n1vec? little confused on this part 
+
+    }
+    n3file >> stemp; //n3file data into our stemp file!
+    for (int i=0;i<NDEPTHS_NS;i++) {//same loop as for n1 and n2
+      n3file >> thisdepth >> thisn;//from here below, same stuff as the last one for different biaxial values
+      vdepths_n3.push_back(-1.*thisdepth);
+      if (BIAXIAL==0 || BIAXIAL==1)
+	n3vec.push_back(thisn);
+      else if (BIAXIAL==-1)
+	n3vec.push_back(n1vec[i]+1.E-5); // the 1.E-5 is so the eigenvectors don't just go in completely random directions                    
+
+    }
+    if (CONSTANTINDICATRIX==1) {//defines the first values for the vectors, bit confused on how contantindicatrix is decided; where does optarg come from?
+      firstn1=n1vec[0];
+      firstn2=n2vec[0];
+      firstn3=n3vec[0];
+
+      int thissize=(int)n1vec.size();//length of vector
+
+      //empties the vectors
+      n1vec.clear();
+      n2vec.clear();
+      n3vec.clear();
+      
+      //adds the first values to the vectors
+      for (int i=0;i<thissize;i++) {//why do we need a loop?
+	n1vec.push_back(firstn1);
+	n2vec.push_back(firstn2);
+	n3vec.push_back(firstn3);
+      }
+
+    }
+
+    cout << "sizes are " << n1vec.size() << "\t" << n2vec.size() << "\t" << n3vec.size() << "\n";
+    cout << "n's are \n";
+    for (int i=0;i<NDEPTHS_NS;i++) {
+      cout << "n1, n2, n3 are " << n1vec[i] << "\t" << n2vec[i] << "\t" << n3vec[i] << "\n";
+    }
+  } 
+
+// smoothing function
+ void smoothVecs(vector<double>  n1vec,vector<double> n2vec,vector<double> n3vec){ //wrap the smooth code with a function, input being n1vec,n2vec,n3vec
+    vector<double> tmp;
+    tmp.resize(n1vec.size());
+    int NSMOOTH=5;
+    int min=(int)(((double)NSMOOTH)/2.);
+    for (int i=0;i<min;i++) {
+      tmp[i]=n1vec[i];
+    }
+    for (int i=n1vec.size()-(NSMOOTH-min);i<n1vec.size();i++) {
+      tmp[i]=n1vec[i];
+    }
+    for (int i=min;i<n1vec.size()-(NSMOOTH-min);i++) {
+      double tmpdouble=0.;
+      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
+	tmpdouble+=n1vec[j];
+      }
+      tmpdouble=tmpdouble/(double)NSMOOTH;
+      tmp[i]=tmpdouble;
+    }
+    n1vec=tmp;
+
+    tmp.clear();
+    tmp.resize(n2vec.size());
+ 
+    min=(int)(((double)NSMOOTH)/2.);
+    for (int i=0;i<min;i++) {
+      tmp[i]=n2vec[i];
+    }
+    for (int i=n2vec.size()-(NSMOOTH-min);i<n2vec.size();i++) {
+      tmp[i]=n2vec[i];
+    }
+    for (int i=min;i<n2vec.size()-(NSMOOTH-min);i++) {
+      double tmpdouble=0.;
+      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
+	tmpdouble+=n2vec[j];
+      }
+      tmpdouble=tmpdouble/(double)NSMOOTH;
+      tmp[i]=tmpdouble;
+    }
+    n2vec=tmp;
+
+    tmp.clear();
+    tmp.resize(n3vec.size());
+ 
+    min=(int)(((double)NSMOOTH)/2.);
+    for (int i=0;i<min;i++) {
+      tmp[i]=n3vec[i];
+    }
+    for (int i=n3vec.size()-(NSMOOTH-min);i<n3vec.size();i++) {
+      tmp[i]=n3vec[i];
+    }
+    for (int i=min;i<n3vec.size()-(NSMOOTH-min);i++) {
+      double tmpdouble=0.;
+      for (int j=i-min;j<i+(NSMOOTH-min);j++) {
+	tmpdouble+=n3vec[j];
+      }
+      tmpdouble=tmpdouble/(double)NSMOOTH;
+      tmp[i]=tmpdouble;
+    }
+    n3vec=tmp;
+  }//end smoothing function
+

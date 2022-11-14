@@ -24,7 +24,7 @@
 #include "TVector2.h"
 //#include "units.h"                                                                                                                                               
 //#include "raytracing_tools.h"                                                                                                                                    
-#include "IceRayTracing-master/IceRayTracing.h"
+#include "IceRayTracing/IceRayTracing.C"
 #include "TLegend.h"
 #include "birefringence.hh"
 
