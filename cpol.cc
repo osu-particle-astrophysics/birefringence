@@ -29,7 +29,7 @@
 #include "TVector2.h"
 //#include "units.h"
 //#include "raytracing_tools.h"
-#include "IceRayTracing-master/IceRayTracing.h"
+#include "/users/PAS0654/osu6665/cpol/IceRayTracing-master/IceRayTracing.h"
 #include "TLegend.h"
 #include "birefringence.hh"
 
@@ -646,9 +646,9 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
 //  ifstream myfile("dave_data/alldays_pol0.log");
   ifstream davea5file("dave_data/a5_amyformat.txt");
 
-  string sn1file="birefringence_paper/n1.txt";
-  string sn2file="birefringence_paper/n2.txt";
-  string sn3file="birefringence_paper/n3.txt";
+  string sn1file="data/n1.txt";
+  string sn2file="data/n2.txt";
+  string sn3file="data/n3.txt";
 
   ifstream n1file(sn1file.c_str());
   ifstream n2file(sn2file.c_str());
@@ -798,6 +798,7 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
     vV.push_back(getV(nvec_tmp));
   }
 
+  // Makes a graph which is used to interpolate the values
   g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
 
   TGraph *graypath_z_x[6];
@@ -907,7 +908,7 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
  // const int NSHOTS=1536;
 
   vdepth_data.resize(5);
-  vdepth.resize(6);
+  vdepth.resize(6); // Note: We see 6 a lot for the 5 ARA stations + the ARIANA station
   vreceiveangle.resize(6);
   vlaunchangle.resize(6);
   voutput6.resize(6);
