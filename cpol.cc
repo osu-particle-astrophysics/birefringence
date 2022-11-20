@@ -666,139 +666,29 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
   birefringenceFileRead(n1file, n2file, n3file, stemp, thisn, thisdepth, firstn1, firstn2, firstn3, 81)
  
   // smooth them.
-  smoothVecs(n1vec,n2vec,n3vec)
+    smoothVecs(n1vec,n2vec,n3vec,tmp)
 
+  //What do I do with this?//
   TGraph *gn1=new TGraph(n1vec.size(),&vdepths_n1[0],&n1vec[0]);
   TGraph *gn2=new TGraph(n2vec.size(),&vdepths_n2[0],&n2vec[0]);
   TGraph *gn3=new TGraph(n3vec.size(),&vdepths_n3[0],&n3vec[0]);
   TGraph *g_V;  
 
-  vector<double> nvec_tmp;
-  nvec_tmp.resize(3);
+ 
+  
 
   //v angle func
-  void VAngle(vdepths_n1,vdepths_n2,vdepths_n3) {
-v
-    for (int i=0;i<n1vec.size();i++) {
-    nvec_tmp[0]=gn1->Eval(vdepths_n1[i]);
-    nvec_tmp[1]=gn2->Eval(vdepths_n2[i]);
-    nvec_tmp[2]=gn3->Eval(vdepths_n3[i]);
-    vV.push_back(getV(nvec_tmp));
-    }
-  } //end func
+  Vangle(nvec_tmp,vdepths_n1, vdepths_n2,vdepths_n3,3)
 
   //find angle v, make function setVVector?, make graph
-  TGraph makeGraph(){
-
-    g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
-
-    TGraph *graypath_z_x[6];
-    TGraph *graypath_z_y[6];
-    TGraph *graypath_y_x[6];
-
-    TGraph *graypath_n[6];
-
-
-    TGraph *grxdepth_atten[6];
-    TGraph *grxdepth_atten_beam[6];
-    TGraph *grxdepth_atten_power[6];
-    TGraph *grxdepth_atten_beam_power[6];
-    TGraph *grxdepth_beam1[6];
-    TGraph *grxdepth_beam2[6];
-    TGraph *gtxdepth_beam1[6];
-    TGraph *gtxdepth_beam2[6];
-    TGraph *gtxdepth_theta1[6];
-    TGraph *gtxdepth_theta2[6];
-    TGraph *grxdepth_theta1[6];
-    TGraph *grxdepth_theta2[6];
-    TGraph *grxdepthE_theta1[6];
-    TGraph *grxdepthE_theta2[6];
-    TGraph *gtxdepth_theta1_Sclock[6];
-    TGraph *gtxdepth_theta2_Sclock[6];
-    TGraph *grxdepth_theta1_Sclock[6];
-    TGraph *grxdepth_theta2_Sclock[6];
-    TGraph *gtxdepth_dispersion1[6];
-    TGraph *gtxdepth_dispersion2[6];
-    TGraph *gtxdepthE_theta1[6];
-    TGraph *gtxdepthE_theta2[6];
-    TGraph *gtxdepthE_theta1_Sclock[6];
-    TGraph *gtxdepthE_theta2_Sclock[6];
-    TGraph *grxdepthE_theta1_Sclock[6];
-    TGraph *grxdepthE_theta2_Sclock[6];
-
-    TGraph *gdotShats_tx[6];
-    TGraph *gdotEhats_tx[6];
-    TGraph *gdotDhats_tx[6];
-
-
-    TGraph *gsnrmax[6];
-    TGraph *g_idepth[6];
-
-    TGraph *gV1_r1[6];
-    TGraph *gV2_r1[6];
-    TGraph *gV1squared_r1[6];
-    TGraph *gV2squared_r1[6];
-    TGraph *gV1V2_r1[6];
-    TGraph *gV1V2_r2[6];
-    TGraph *goppositeV1V2_r1[6];
-    TGraph *goppositeV1V2_r2[6];
-    TGraph *gpower_r1[6];
-    TGraph *gpower_r2[6];
-    TGraph *gvoltage_r1[6];
-    TGraph *gvoltage_r2[6];
-    TGraph *gfield_r1[6];
-    TGraph *gfield_r2[6];
-    TGraph *genvelope_minus_r1[6];
-    TGraph *genvelope_minus_r2[6];
-    TGraph *genvelope_plus_r1[6];
-    TGraph *genvelope_plus_r2[6];
-    TGraph *gvenvelope_minus_r1[6];
-    TGraph *gvenvelope_minus_r2[6];
-    TGraph *gvenvelope_plus_r1[6];
-    TGraph *gvenvelope_plus_r2[6];
-    TGraph *gEenvelope_minus_r1[6];
-    TGraph *gEenvelope_minus_r2[6];
-    TGraph *gEenvelope_plus_r1[6];
-    TGraph *gEenvelope_plus_r2[6];
-
-
-    TGraph *gV1_r2[6];
-    TGraph *gV2_r2[6];
-    TGraph *gV1squared_r2[6];
-    TGraph *gV2squared_r2[6];
-
-    TGraph *gepsilon1_tx[6];
-    TGraph *gepsilon2_tx[6];
-    TGraph *gdiffepsilon_tx[6];
-
-    TGraph *gepsilon1_rx[6];
-    TGraph *gepsilon2_rx[6];
-    TGraph *gdiffepsilon_rx[6];
-
-    TGraph *gpolarization_Omega_rx[6];
-    TGraph *gpolarization_Psi_rx[6];
-    TGraph *gEpolarization_Omega_rx[6];
-    TGraph *gEpolarization_Psi_rx[6];
-
-    TGraph *gpolarization_reversedepth_Omega_rx[6];
-    TGraph *gpolarization_reversedepth_Psi_rx[6];
-
-    TGraph *gEpolarization_reversedepth_Omega_rx[6];
-    TGraph *gEpolarization_reversedepth_Psi_rx[6];
-
-    TGraph *g_receive_launch[6];
-    TGraph *g_receive[6];
-    TGraph *g_launch[6];
-    TGraph *g_output6[6];
-    TGraph *g_output7[6];
-    TGraph *g_output8[6];
-  }
+  makeGraph(vdepths_n1,vV);
 
   //  cout << "n1, n2, and n3 at 1000m depth is " << gn1->Eval(-1000.) << "\t" << gn2->Eval(-1000.) << "\t" << gn3->Eval(-1000.) << "\n";
 
   int NSHOTS=640;
  // const int NSHOTS=1536;
-  void setVVector(){
+  double 
+  double setVVector(){
     vdepth_data.resize(5);
     vdepth.resize(6);
     vreceiveangle.resize(6);
@@ -824,13 +714,12 @@ v
   }
   //also make into a function!
   //while (!myfile.eof())
-  void readDepthFiles(myfile, Dave5afile){ //take myfile and dave's data and read in values
+  readDepthFiles(myfile,Dave5afile,this_station,this_day,this_pol,this_depth,this_snrmax)
+  void readDepthFiles(ifstream myfile,ifstream Dave5afile,int this_station, int this_day,int this_pol, double this_depth, double this_snrmax){ //take myfile and dave's data and read in values
     if (myfile.is_open())
       {
 	for (int i=0;i<NSHOTS;i++) {
 	  //cout << "i'm here. \n";
-	  int this_station, this_day, this_pol;
-	  double this_depth, this_snrmax;
 	  // this_depth is a negative number
 	  myfile >> this_station >> this_day >> this_pol >> this_depth >> this_snrmax;
 	  this_snrmax=this_snrmax*sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1])/sqrt((-1000.-station_depths[0])*(-1000.-station_depths[0])+horizontal_distances[0]*horizontal_distances[0]); // correct for 1/r

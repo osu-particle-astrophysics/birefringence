@@ -738,8 +738,7 @@ void birefringenceFileRead(ifstream n1file,ifstream n2file,ifstream n3file, stri
   } 
 
 // smoothing function
- void smoothVecs(vector<double>  n1vec,vector<double> n2vec,vector<double> n3vec){ //wrap the smooth code with a function, input being n1vec,n2vec,n3vec
-    vector<double> tmp;
+double smoothVecs(vector<double>  n1vec,vector<double> n2vec,vector<double> n3vec,vector<double>tmp){ //wrap the smooth code with a function, input being n1vec,n2vec,n3vec
     tmp.resize(n1vec.size());
     int NSMOOTH=5;
     int min=(int)(((double)NSMOOTH)/2.);
@@ -798,5 +797,220 @@ void birefringenceFileRead(ifstream n1file,ifstream n2file,ifstream n3file, stri
       tmp[i]=tmpdouble;
     }
     n3vec=tmp;
-  }//end smoothing function
+ }//end smoothing function
 
+double VAngle(vector<double> nvec_tmp,vector<double> vdepths_n1,vector<double> vdepths_n2,vector<double> vdepths_n3,int n) {
+    
+    nvec_tmp.resize(n);
+
+    for (int i=0;i<n1vec.size();i++) {
+    nvec_tmp[0]=gn1->Eval(vdepths_n1[i]);
+    nvec_tmp[1]=gn2->Eval(vdepths_n2[i]);
+    nvec_tmp[2]=gn3->Eval(vdepths_n3[i]);
+    vV.push_back(getV(nvec_tmp));
+    }
+  } //end func
+
+//graphing- make 6s variables???
+TGraph makeGraph(vector<double> vdepths_n1,vector<double> vV){
+
+    g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
+
+    TGraph *graypath_z_x[6];
+    TGraph *graypath_z_y[6];
+    TGraph *graypath_y_x[6];
+
+    TGraph *graypath_n[6];
+
+
+    TGraph *grxdepth_atten[6];
+    TGraph *grxdepth_atten_beam[6];
+    TGraph *grxdepth_atten_power[6];
+    TGraph *grxdepth_atten_beam_power[6];
+    TGraph *grxdepth_beam1[6];
+    TGraph *grxdepth_beam2[6];
+    TGraph *gtxdepth_beam1[6];
+    TGraph *gtxdepth_beam2[6];
+    TGraph *gtxdepth_theta1[6];
+    TGraph *gtxdepth_theta2[6];
+    TGraph *grxdepth_theta1[6];
+    TGraph *grxdepth_theta2[6];
+    TGraph *grxdepthE_theta1[6];
+    TGraph *grxdepthE_theta2[6];
+    TGraph *gtxdepth_theta1_Sclock[6];
+    TGraph *gtxdepth_theta2_Sclock[6];
+    TGraph *grxdepth_theta1_Sclock[6];
+    TGraph *grxdepth_theta2_Sclock[6];
+    TGraph *gtxdepth_dispersion1[6];
+    TGraph *gtxdepth_dispersion2[6];
+    TGraph *gtxdepthE_theta1[6];
+    TGraph *gtxdepthE_theta2[6];
+    TGraph *gtxdepthE_theta1_Sclock[6];
+    TGraph *gtxdepthE_theta2_Sclock[6];
+    TGraph *grxdepthE_theta1_Sclock[6];
+    TGraph *grxdepthE_theta2_Sclock[6];
+
+    TGraph *gdotShats_tx[6];
+    TGraph *gdotEhats_tx[6];
+    TGraph *gdotDhats_tx[6];
+
+
+    TGraph *gsnrmax[6];
+    TGraph *g_idepth[6];
+
+    TGraph *gV1_r1[6];
+    TGraph *gV2_r1[6];
+    TGraph *gV1squared_r1[6];
+    TGraph *gV2squared_r1[6];
+    TGraph *gV1V2_r1[6];
+    TGraph *gV1V2_r2[6];
+    TGraph *goppositeV1V2_r1[6];
+    TGraph *goppositeV1V2_r2[6];
+    TGraph *gpower_r1[6];
+    TGraph *gpower_r2[6];
+    TGraph *gvoltage_r1[6];
+    TGraph *gvoltage_r2[6];
+    TGraph *gfield_r1[6];
+    TGraph *gfield_r2[6];
+    TGraph *genvelope_minus_r1[6];
+    TGraph *genvelope_minus_r2[6];
+    TGraph *genvelope_plus_r1[6];
+    TGraph *genvelope_plus_r2[6];
+    TGraph *gvenvelope_minus_r1[6];
+    TGraph *gvenvelope_minus_r2[6];
+    TGraph *gvenvelope_plus_r1[6];
+    TGraph *gvenvelope_plus_r2[6];
+    TGraph *gEenvelope_minus_r1[6];
+    TGraph *gEenvelope_minus_r2[6];
+    TGraph *gEenvelope_plus_r1[6];
+    TGraph *gEenvelope_plus_r2[6];
+
+
+    TGraph *gV1_r2[6];
+    TGraph *gV2_r2[6];
+    TGraph *gV1squared_r2[6];
+    TGraph *gV2squared_r2[6];
+
+    TGraph *gepsilon1_tx[6];
+    TGraph *gepsilon2_tx[6];
+    TGraph *gdiffepsilon_tx[6];
+
+    TGraph *gepsilon1_rx[6];
+    TGraph *gepsilon2_rx[6];
+    TGraph *gdiffepsilon_rx[6];
+
+    TGraph *gpolarization_Omega_rx[6];
+    TGraph *gpolarization_Psi_rx[6];
+    TGraph *gEpolarization_Omega_rx[6];
+    TGraph *gEpolarization_Psi_rx[6];
+
+    TGraph *gpolarization_reversedepth_Omega_rx[6];
+    TGraph *gpolarization_reversedepth_Psi_rx[6];
+
+    TGraph *gEpolarization_reversedepth_Omega_rx[6];
+    TGraph *gEpolarization_reversedepth_Psi_rx[6];
+
+    TGraph *g_receive_launch[6];
+    TGraph *g_receive[6];
+    TGraph *g_launch[6];
+    TGraph *g_output6[6];
+    TGraph *g_output7[6];
+    TGraph *g_output8[6];
+  }
+
+  void readDepthFiles(ifstream myfile,ifstream Dave5afile,int this_station, int this_day,int this_pol, double this_depth, double this_snrmax){ //take myfile and dave's data and read in values
+    if (myfile.is_open())
+      {
+	for (int i=0;i<NSHOTS;i++) {
+	  //cout << "i'm here. \n";
+	  // this_depth is a negative number
+	  myfile >> this_station >> this_day >> this_pol >> this_depth >> this_snrmax;
+	  this_snrmax=this_snrmax*sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1])/sqrt((-1000.-station_depths[0])*(-1000.-station_depths[0])+horizontal_distances[0]*horizontal_distances[0]); // correct for 1/r
+	//if (this_station==1)
+	//	if (i>640)
+	//	cout << "station, this_pol, depth, snrmax are " << this_station << "\t" << this_pol << "\t" << this_depth << "\t" << this_snrmax << "\n";
+	//	this_snrmax=this_snrmax*exp(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1])/L_ATTEN);
+	//cout << "this_depth is " << this_depth << "\n";
+	
+	  if (this_snrmax>0. && !(this_station==5 && this_pol==0)) {
+	    vdepth_data[this_station-1].push_back(this_depth);
+	    //videpth[this_station-1].push_back((double)(vdepth_data[this_station-1].size()-1));
+	    vsnrmax[this_station-1].push_back(this_snrmax);
+	    vtotal_distances[this_station-1].push_back(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1]));
+
+	    if (i>2) {
+	      running_mean=0.;
+	      running_rms=0.;
+	      for (int j=0;j<3;j++) {
+		running_mean+=vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1];
+	      }
+	      running_mean=running_mean/3.;
+	 
+	      for (int j=0;j<3;j++) {
+		running_rms+=(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean)*(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean);
+	      }
+	      running_rms=sqrt(running_rms/2.);
+	  
+	    }
+	    vsnrmax_err[this_station-1].push_back(running_rms);
+	    vdepth_data_err[this_station-1].push_back(0.);
+	    vtotal_distances_err[this_station-1].push_back(0.);
+	  } // if this_snrmax>0.
+	}
+      
+	myfile.close();
+      
+      }
+    NSHOTS=33;
+
+    if (WHICHPOL==0) {
+      if (davea5file.is_open())
+	{
+	  cout << "i'm reading dave's a5 file.\n";
+	  for (int i=0;i<NSHOTS;i++) {
+	    //cout << "i'm here. \n";
+	    int this_station, this_day, this_pol;
+	    double this_depth, this_snrmax;
+	    string stemp;
+	    int this_channel;
+	    this_station=5; // station 5
+	  
+	  
+	    davea5file >> stemp >> this_channel >> this_depth >> this_snrmax;
+	  //if (this_station==1)
+	  //if (i>640)
+	  //	  cout << "station, depth, snrmax are " << this_station << "\t" << this_depth << "\t" << this_snrmax << "\n";
+	  //this_snrmax=this_snrmax*exp(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1])/L_ATTEN);
+	  //cout << "this_depth is " << this_depth << "\n";
+	  
+	    if (this_snrmax>0.) {
+	      vdepth_data[this_station-1].push_back(this_depth);
+	    //videpth[this_station-1].push_back((double)(vdepth_data[this_station-1].size()-1));
+	      vsnrmax[this_station-1].push_back(this_snrmax);
+	      vtotal_distances[this_station-1].push_back(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1]));
+	    
+	      if (i>2) {
+		running_mean=0.;
+		running_rms=0.;
+		for (int j=0;j<3;j++) {
+		  running_mean+=vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1];
+		}
+		running_mean=running_mean/3.;
+	      
+		for (int j=0;j<3;j++) {
+		  running_rms+=(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean)*(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean);
+		}
+		running_rms=sqrt(running_rms/2.);
+	      
+	      }
+	      vsnrmax_err[this_station-1].push_back(running_rms);
+	      vdepth_data_err[this_station-1].push_back(0.);
+	      vtotal_distances_err[this_station-1].push_back(0.);
+	    } // if this_snrmax>0.
+	  }
+	
+	  davea5file.close();
+	
+	}
+    }
+  }
