@@ -666,7 +666,7 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
   birefringenceFileRead(n1file, n2file, n3file, stemp, thisn, thisdepth, firstn1, firstn2, firstn3, 81)
  
   // smooth them.
-    smoothVecs(n1vec,n2vec,n3vec,tmp)
+   smoothVecs(n1vec,n2vec,n3vec,tmp)
 
   //What do I do with this?//
   TGraph *gn1=new TGraph(n1vec.size(),&vdepths_n1[0],&n1vec[0]);
@@ -681,14 +681,123 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
   Vangle(nvec_tmp,vdepths_n1, vdepths_n2,vdepths_n3,3)
 
   //find angle v, make function setVVector?, make graph
-  makeGraph(vdepths_n1,vV);
+
+    g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
+
+    TGraph *graypath_z_x[6];
+    TGraph *graypath_z_y[6];
+    TGraph *graypath_y_x[6];
+
+    TGraph *graypath_n[6];
+
+
+    TGraph *grxdepth_atten[6];
+    TGraph *grxdepth_atten_beam[6];
+    TGraph *grxdepth_atten_power[6];
+    TGraph *grxdepth_atten_beam_power[6];
+    TGraph *grxdepth_beam1[6];
+    TGraph *grxdepth_beam2[6];
+    TGraph *gtxdepth_beam1[6];
+    TGraph *gtxdepth_beam2[6];
+    TGraph *gtxdepth_theta1[6];
+    TGraph *gtxdepth_theta2[6];
+    TGraph *grxdepth_theta1[6];
+    TGraph *grxdepth_theta2[6];
+    TGraph *grxdepthE_theta1[6];
+    TGraph *grxdepthE_theta2[6];
+    TGraph *gtxdepth_theta1_Sclock[6];
+    TGraph *gtxdepth_theta2_Sclock[6];
+    TGraph *grxdepth_theta1_Sclock[6];
+    TGraph *grxdepth_theta2_Sclock[6];
+    TGraph *gtxdepth_dispersion1[6];
+    TGraph *gtxdepth_dispersion2[6];
+    TGraph *gtxdepthE_theta1[6];
+    TGraph *gtxdepthE_theta2[6];
+    TGraph *gtxdepthE_theta1_Sclock[6];
+    TGraph *gtxdepthE_theta2_Sclock[6];
+    TGraph *grxdepthE_theta1_Sclock[6];
+    TGraph *grxdepthE_theta2_Sclock[6];
+
+    TGraph *gdotShats_tx[6];
+    TGraph *gdotEhats_tx[6];
+    TGraph *gdotDhats_tx[6];
+
+
+    TGraph *gsnrmax[6];
+    TGraph *g_idepth[6];
+
+    TGraph *gV1_r1[6];
+    TGraph *gV2_r1[6];
+    TGraph *gV1squared_r1[6];
+    TGraph *gV2squared_r1[6];
+    TGraph *gV1V2_r1[6];
+    TGraph *gV1V2_r2[6];
+    TGraph *goppositeV1V2_r1[6];
+    TGraph *goppositeV1V2_r2[6];
+    TGraph *gpower_r1[6];
+    TGraph *gpower_r2[6];
+    TGraph *gvoltage_r1[6];
+    TGraph *gvoltage_r2[6];
+    TGraph *gfield_r1[6];
+    TGraph *gfield_r2[6];
+    TGraph *genvelope_minus_r1[6];
+    TGraph *genvelope_minus_r2[6];
+    TGraph *genvelope_plus_r1[6];
+    TGraph *genvelope_plus_r2[6];
+    TGraph *gvenvelope_minus_r1[6];
+    TGraph *gvenvelope_minus_r2[6];
+    TGraph *gvenvelope_plus_r1[6];
+    TGraph *gvenvelope_plus_r2[6];
+    TGraph *gEenvelope_minus_r1[6];
+    TGraph *gEenvelope_minus_r2[6];
+    TGraph *gEenvelope_plus_r1[6];
+    TGraph *gEenvelope_plus_r2[6];
+
+
+    TGraph *gV1_r2[6];
+    TGraph *gV2_r2[6];
+    TGraph *gV1squared_r2[6];
+    TGraph *gV2squared_r2[6];
+
+    TGraph *gepsilon1_tx[6];
+    TGraph *gepsilon2_tx[6];
+    TGraph *gdiffepsilon_tx[6];
+
+    TGraph *gepsilon1_rx[6];
+    TGraph *gepsilon2_rx[6];
+    TGraph *gdiffepsilon_rx[6];
+
+    TGraph *gpolarization_Omega_rx[6];
+    TGraph *gpolarization_Psi_rx[6];
+    TGraph *gEpolarization_Omega_rx[6];
+    TGraph *gEpolarization_Psi_rx[6];
+
+    TGraph *gpolarization_reversedepth_Omega_rx[6];
+    TGraph *gpolarization_reversedepth_Psi_rx[6];
+
+    TGraph *gEpolarization_reversedepth_Omega_rx[6];
+    TGraph *gEpolarization_reversedepth_Psi_rx[6];
+
+    TGraph *g_receive_launch[6];
+    TGraph *g_receive[6];
+    TGraph *g_launch[6];
+    TGraph *g_output6[6];
+    TGraph *g_output7[6];
+    TGraph *g_output8[6];
+
+    voutput7.resize(6);
+    voutput8.resize(6);
+    videpth.resize(6);
+    vreversedepth.resize(6);
+    vangle_Shat_e1_khat.resize(6);
+    vangle_Shat_e2_khat.resize(6);
+    vangle_khat_0_khat_1_2.resize(6);
+    vangle_khat_0_khat_2_2.resize(6);
 
   //  cout << "n1, n2, and n3 at 1000m depth is " << gn1->Eval(-1000.) << "\t" << gn2->Eval(-1000.) << "\t" << gn3->Eval(-1000.) << "\n";
 
   int NSHOTS=640;
- // const int NSHOTS=1536;
-  double 
-  double setVVector(){
+ // const int NSHOTS=1536;{
     vdepth_data.resize(5);
     vdepth.resize(6);
     vreceiveangle.resize(6);
@@ -814,12 +923,12 @@ if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
 
   //  cout << "size of vdepth is " << vdepth_data.size() << "\n";
   //cout << "size of vdepth[4] is " << vdepth_data[4].size() << "\n";
-  double arianna_minpulserdepth=-400.;
-  double arianna_pulserstep=10.;
-  int NARIANNA_PULSER=200;
+  double minpulserdepth=-400.; //remove the arianna from the pulser variables
+  double pulserstep=10.;
+  int N_PULSER=200;
   for (int istations=0;istations<NSTATIONS;istations++) {
-    for (int i=0;i<NARIANNA_PULSER;i++) {
-      vdepth[istations].push_back(arianna_minpulserdepth-(double)arianna_pulserstep*(double)i);
+    for (int i=0;i<N_PULSER;i++) {
+      vdepth[istations].push_back(minpulserdepth-(double)pulserstep*(double)i);
       videpth[istations].push_back((double)i);   
     }
   }

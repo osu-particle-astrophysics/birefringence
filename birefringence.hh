@@ -22,3 +22,13 @@ void thetastoEpsilons(double thetaE_e1_Sclock,double thetaE_e2_Sclock,
 		      double &epsilon1,double &epsilon2); // converts angles on the clock to epsilon angles (relative to 12 o'clock and 3 o'clock)
 double getV(vector<double> nvec);
 
+//add my function declarations here!
+
+void birefringenceFileRead(ifstream n1file,ifstream n2file,ifstream n3file, string stemp, double thisn, double thisdepth, double firstn1, double firstn2, double firstn3, int NDEPTHS_NS) //reads in files and gets depth vectors
+
+double smoothVecs(vector<double>  n1vec,vector<double> n2vec,vector<double> n3vec,vector<double>tmp)//smooths vectors 1,2,3
+
+double VAngle(vector<double> nvec_tmp,vector<double> vdepths_n1,vector<double> vdepths_n2,vector<double> vdepths_n3,int n)//finds the angles between the three vectors
+
+void readDepthFiles(ifstream myfile,ifstream Dave5afile,int this_station, int this_day,int this_pol, double this_depth, double this_snrmax){ //take myfile and dave's data and read in values
+
