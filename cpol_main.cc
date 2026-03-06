@@ -1395,7 +1395,6 @@ int main(int argc, char** argv) {
     //   - accumulate attenuation and birefringent phase
     //   - compute TX/RX polarization projections and beam factors
     // ------------------------------------------------------------------------    
-    #pragma omp parallel for schedule(dynamic)
     for (int i=minstation;i<=maxstation;i++) {
         vmag_atten_beam[i].resize(vdepth[i].size());
         vmag_atten_beam_crosspol[i].resize(vdepth[i].size());
