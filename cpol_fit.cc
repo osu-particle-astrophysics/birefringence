@@ -230,8 +230,8 @@ int psiModel(int argc, char** argv, const Double_t* par_fit, Double_t* &fit_dept
     char clswitch;
 
     double freq=160.E6;             // default frequency [Hz]
-    int CROSSPOLANGLE_TX_INT=par_fit[18];
-    int CROSSPOLANGLE_RX_INT=-par_fit[18];
+    int CROSSPOLANGLE_TX_INT=par_fit[9];
+    int CROSSPOLANGLE_RX_INT=-par_fit[9];
     int BIAXIAL=1;
     int CONSTANTINDICATRIX=0;
 

@@ -2,7 +2,7 @@
 
 CCFILE  := fit.cc cpol_fit.cc birefringence_fit.cc
 SCRATCH := tmp.cc
-OBJ     := cpol.o
+OBJ     := fit.o
 EXE     := fit.exe
 
 CXX := g++
