@@ -1,6 +1,6 @@
 # Build cpol.exe
 
-CCFILE  := cpol_main.cc birefringence.cc
+CCFILE  := cpol_main.cc birefringence.cc config.cc geometry.cc ice_profile.cc
 SCRATCH := tmp.cc
 OBJ     := cpol.o
 EXE     := cpol.exe
@@ -23,7 +23,7 @@ GSLINC := -I$(GSLDIR)/include
 GSLLIB := -L$(GSLDIR)/lib -lgsl -lgslcblas
 
 # ---- Flags
-CXXFLAGS := -O3 -pg -Wall -fPIC $(ROOTCFLAGS) $(GSLINC) -Wno-error -Wno-unused-variable
+CXXFLAGS := -O3 -pg -Wall -fPIC $(ROOTCFLAGS) $(GSLINC) -Wno-error -Wno-unused-variable -w
 LDFLAGS  := -O3 -pg
 LIBS     := $(ROOTLIBS) -lMinuit $(GSLLIB)
 

@@ -17,6 +17,8 @@ This code describes the effects of birefringence at the South Pole
 
 #include <iostream>
 #include <fstream>
+#include <chrono>
+#include <ctime>
 #include <string>
 #include "TGraph.h"
 #include "TGraphErrors.h"
@@ -29,35 +31,27 @@ This code describes the effects of birefringence at the South Pole
 #include <omp.h>
 
 // Local / project includes
-#include "/data/user/alansalgo/ARA/IceRayTracing/IceRayTracing.h"
+#include "IceRayTracing.h"
+//#include "/data/user/alansalgo/ARA/IceRayTracing/IceRayTracing.h"
 #include "TLegend.h"
 #include "birefringence.hh"
+// Refactoring into .hh files
+#include "constants.hh"
+#include "config.hh"
+#include "geometry.hh"
+#include "station_data.hh"
+#include "ice_profile.hh"
+
 
 using namespace std;
 
 // ----------------------------------------------------------------------------
 // Constants and global variables
 // ----------------------------------------------------------------------------
-const double PI=3.1415926;
-const double CLIGHT=3.E8;
-const double DEGRAD=180./PI;
-const double NICE=1.78;
-
-// Small numeric tolerances / discretization knobs
-const double DELTAN=0.0005;
-const double HOWSMALLISTOOSMALL=1.e-8;
-const int UZAIRSTEP=5;
 
 // Principal indices used for a simple "toy" dielectric tensor if not depth-dependent
 // (often interpreted as principal axes of the indicatrix)
 vector<double> nvec{1.77,1.7805,1.7815};
-
-// Attenuation length (used for power/beam propagation)
-const double L_ATTEN=2200.;
-
-// Feet-to-meters conversion factor
-// MFT = (1/100)*2.54*12 = 0.3048, i.e. 1 ft -> 0.3048 m
-const double MFT=1./100.*2.54/1.*12.;
 
 // ROOT color palettes used for plotting
 int icolors[6]={kGreen+2,kRed+1,kOrange+1,kViolet+1,kBlue,kBlack};
@@ -87,6 +81,15 @@ TVector3 rotateE(TVector3 epsilon, double angle_iceflow, TVector3 E);
 // main
 // ----------------------------------------------------------------------------
 int main(int argc, char** argv) {
+  // Read the terminal inputs
+  Config cfg(argc, argv);   // Get start time
+  Geometry geom;            // Set up the geometry of stations and pulsers
+
+	using clock = std::chrono::system_clock;
+	using sec = std::chrono::duration<double>;
+	const auto start = clock::now();
+	// MACHTAY: to check speed, let's turn off print statements:
+	cout.setstate(ios_base::failbit);
 
     // ------------------------------------------------------------------------
     // Build dielectric tensor epsilon and its inverse from principal indices.
@@ -103,737 +106,52 @@ int main(int argc, char** argv) {
     epsilon[1]=nvec[1]*nvec[1];
     epsilon[2]=nvec[2]*nvec[2];
 
-    // ------------------------------------------------------------------------
-    // Geometry setup
-    // ------------------------------------------------------------------------
-    const double DEPTH=-600.;
-    const int ispecial=0;
 
-    const double depth_special=-1100.;
-
-    // Depth grid used for "special" evaluations (e.g., diagnostic depths)
-    const double stepspecial=20.;
-    const int NSPECIAL=50;
-    double whichspecial[NSPECIAL];
-    double startspecial=-1600.;
-    for (int ispecial=0;ispecial<NSPECIAL;ispecial++) {
-        whichspecial[ispecial]=startspecial+stepspecial*(double)ispecial;
-    }
-
-    const int WHICHPOL=0;
-    const int DORAYTRACING=1;
-
-    // ------------------------------------------------------------------------
-    // Station definitions: A1..A5 plus ARIANNA
-    // ------------------------------------------------------------------------
-    const int NSTATIONS=6;
-    const int minstation=0;
-    const int maxstation=5;
-    int igreatestdepth[NSTATIONS];
-    int imostshallowdepth[NSTATIONS];
-
-    // Horizontal pulser->station distances (in meters after MFT conversion)
-    double horizontal_distances[NSTATIONS]={1257.,2353.,3146.,3199.,5179.8892,653.804525};
-    string snames[NSTATIONS]={"A1","A2","A3","A4","A5","ARIANNA"};
-
-    // ARIANNA azimuth/phi angle (radians)
-    double PHI_ARIANNA=(90.+36.+46./60.+23./3600.+1.4)/DEGRAD;
-
-
-    const int NSTEPS=100.;
-    double min_altitude=-1000.;
-    double max_altitude=-600.;
-
-    double N_ICE=1.78;
-    double DELTA_N=0.427;
-
-
-    static double VOLTAGENORM=150.*11./7.;
-
-    // ------------------------------------------------------------------------
-    // Command-line options (getopt):
-    //   -b : BIAXIAL flag
-    //   -f : frequency in MHz
-    //   -t : TX cross-pol angle in degrees
-    //   -u : RX cross-pol angle in degrees
-    //   -c : CONSTANTINDICATRIX flag
-    //
-    // BIAXIAL meaning:
-    //   1  => fully biaxial: n1(z), n2(z), n3(z) all independent from files
-    //   0  => uniaxial: n2(z) forced equal to n1(z), n3(z) read from file
-    //  -1  => nearly isotropic: n2(z)=n1(z), n3(z)=n1(z)+1e-5 (break degeneracy)
-    //
-    // CONSTANTINDICATRIX:
-    //   1 => enforce depth-independent indicatrix (take first depth sample and repeat)
-    //   0 => keep depth dependence from files
-    // ------------------------------------------------------------------------
-    char clswitch;
-
-    double freq=160.E6;             // default frequency [Hz]
-    int CROSSPOLANGLE_TX_INT=7;
-    int CROSSPOLANGLE_RX_INT=-7;
-    int BIAXIAL=1;
-    int CONSTANTINDICATRIX=0;
-
-    if (argc>1) {
-        while ((clswitch = getopt(argc, argv, "b:f:t:u:c:")) != EOF) {
-            switch(clswitch) {
-            case 'b':
-                cout << optarg << "\n";
-                BIAXIAL=atoi(optarg);
-                cout << "biaxial " << BIAXIAL << endl;
-                break;
-            case 'f':
-                cout << optarg << "\n";
-                freq=(double)atof(optarg)*1.E6;
-                cout << "freq " << freq << endl;
-                break;
-            case 't':
-                CROSSPOLANGLE_TX_INT=atoi(optarg);
-                cout << "CROSSPOLANGLE_TX_INT " << CROSSPOLANGLE_TX_INT << endl;
-                break;
-            case 'u':
-                CROSSPOLANGLE_RX_INT=atoi(optarg);
-                cout << "CROSSPOLANGLE_RX_INT " << CROSSPOLANGLE_RX_INT << endl;
-                break;
-            case 'c':
-                CONSTANTINDICATRIX=atoi(optarg);
-                cout << "CONSTANTINDICATRIX " << CONSTANTINDICATRIX << endl;
-                break;
-            }
-        }
-    }
-
-    // Convert cross-pol angles to radians
-    double CROSSPOLANGLE_TX=(double)CROSSPOLANGLE_TX_INT/DEGRAD;
-    double CROSSPOLANGLE_RX=(double)CROSSPOLANGLE_RX_INT/DEGRAD;
-
-    // ------------------------
-    // Frequency 
-    // ------------------------
-    double freqmin=0.;
-    double freqmax=1.E9;
-    const int NFREQ=100;
-    vector<double> vfreqs;
-
-
-    for (int i=0;i<NFREQ;i++) {
-        vfreqs.push_back(freqmin+(freqmax-freqmin)/(double)NFREQ*(double)i);
-    }
-
-    // ------------------------------------------------------------------------
-    // Station coordinates and pulser coordinates (originally in feet; converted to meters)
-    // ------------------------------------------------------------------------
-    double pulser_coords[2]={42358.94,48974.2};
-
-    double station_coords[NSTATIONS][2]={
-
-
-        {38754., 51051.},
-        {35481., 45369.},
-        {32200., 51053.},
-        {35478., 56737.},
-        {32356., 39746.},
-
-
-        {41153.,50381.75}
-    };
-
-    cout << "station_coords of ARIANNA is " << station_coords[5][0] << "\t" << station_coords[5][1] << "\n";
-    for (int i=0;i<NSTATIONS;i++) {
-        // Print horizontal distance in meters after conversion
-        cout << "distance to station " << i+1 << " is " << sqrt((station_coords[i][0]-pulser_coords[0])*(station_coords[i][0]-pulser_coords[0]) + (station_coords[i][1]-pulser_coords[1])*(station_coords[i][1]-pulser_coords[1]))*MFT << "\n";
-    }
-
-    // Convert pulser and station coordinates to meters
-    for (int j=0;j<2;j++) {
-        pulser_coords[j]=pulser_coords[j]*MFT;
-    }
-    for (int i=0;i<6;i++) {
-        for (int j=0;j<2;j++) {
-            station_coords[i][j]=station_coords[i][j]*MFT;
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // Ice-flow direction and "ordinary" axis direction in horizontal plane.
-    // angle_iceflow: azimuth defining principal axis orientation relative to x-y.
-    // ------------------------------------------------------------------------
-    const double angle_iceflow=(36.+ (46./60.) + (23./3600.) + 90.)/DEGRAD;
-    TVector3 ordinary(cos(angle_iceflow),sin(angle_iceflow),0.);
-
-    // Default TX/RX orientations (both along +z)
-    TVector3 tx_orientation(0.,0.,1.);
-    TVector3 rx1_orientation(0.,0.,1.);
-
-    // ------------------------------------------------------------------------
-    // Arrays that store station-wide results / diagnostics
-    // ------------------------------------------------------------------------
-    double beam[2]={0.};
-    double deltan_exp[6];
-    double deltan_obs[6];
-    double station[6]={1,2,3,4,5,6};
-    double station_depths[6]={-80.,-180.,-180.,-180.,-180.,-1.}; // receiver depths (m)
-    double zeroes[6]={0.};
-    double deltan_obs_err[6]={0.};
-
-    double alpha[6];    // station azimuth relative to ice-flow axis
-    double alpha_deg[6];
-    TVector3 pulsertostationhat_specialdepth[6];    
-    TVector3 pulsertostation[6];
-
-    // ------------------------------------------------------------------------
-    // Compute geometry-dependent alpha for each station and expected delta-n
-    // ------------------------------------------------------------------------
-    for (int i=minstation;i<=maxstation;i++) {
-
-        // Vector from pulser to station, using station depth and pulser depth
-        pulsertostationhat_specialdepth[i][0]=(station_coords[i][0]-pulser_coords[0]);
-        pulsertostationhat_specialdepth[i][1]=(station_coords[i][1]-pulser_coords[1]);
-        pulsertostationhat_specialdepth[i][2]=station_depths[i]-(DEPTH);
-
-        if (pulsertostationhat_specialdepth[i].Mag()<HOWSMALLISTOOSMALL)
-            cout << "pulsertostationhat_specialdepth mag is " << pulsertostationhat_specialdepth[i].Mag() << "\n";
-
-        // Normalize to unit vector
-        pulsertostationhat_specialdepth[i].SetMag(1.);
-
-        // Station azimuth in x-y plane
-        double y=station_coords[i][1]-pulser_coords[1];
-        double x=station_coords[i][0]-pulser_coords[0];
-        double angle_thisstation=atan2(y,x);
-
-        // alpha = (station azimuth) - (ice-flow azimuth), wrapped to [-pi, +pi]
-        double thisalpha=angle_thisstation-angle_iceflow;
-
-        if (thisalpha>PI)
-        thisalpha-=2.*PI;
-        if (thisalpha<-1.*PI)
-        thisalpha+=2.*PI;
-        alpha[i]=thisalpha;
-        cout << "A" << i+1 << ": angle_thisstation, angle_iceflow, alpha are " << angle_thisstation*DEGRAD << "\t" << angle_iceflow*DEGRAD << "\t" << alpha[i]*DEGRAD << ".\n";
-
-        alpha_deg[i]=alpha[i]*DEGRAD;
-
-        // Outputs from getDeltaN: eigenstates p_e1, p_e2 and indices n_e1, n_e2
-        TVector3 p_e1;
-        TVector3 p_e2;
-        double n_e1;
-        double n_e2;
-
-        // Expected birefringence delta n magnitude for that propagation direction
-        deltan_exp[i]=getDeltaN(BIAXIAL,nvec,pulsertostationhat_specialdepth[i],angle_iceflow,
-        n_e1,n_e2,p_e1,p_e2);
-    }
-
-    // ------------------------------------------------------------------------
-    // Special handling for ARIANNA: place it ~650 m away along ice-flow direction
-    // and compute alpha relative to "ordinary" axis.
-    // ------------------------------------------------------------------------
-    double x_arianna=650.*cos(angle_iceflow);
-    double y_arianna=650.*sin(angle_iceflow);
-    double z_arianna=0.;
-    pulsertostationhat_specialdepth[5][0]=x_arianna-pulser_coords[0];
-    pulsertostationhat_specialdepth[5][1]=y_arianna-pulser_coords[1];
-    pulsertostationhat_specialdepth[5][2]=z_arianna-(DEPTH);
-
-    if (pulsertostationhat_specialdepth[5].Mag()<HOWSMALLISTOOSMALL)
-    cout << "pulsertostationhat_specialdepth[5] mag is " << pulsertostationhat_specialdepth[5].Mag() << "\n";
-
-    pulsertostationhat_specialdepth[5].SetMag(1.);
-
-    double thisalpha=acos(pulsertostationhat_specialdepth[5].Dot(ordinary));
-    if (thisalpha>PI)
-    thisalpha-=2.*PI;
-    if (thisalpha<-1.*PI)
-    thisalpha+=2.*PI;
-    alpha[5]=thisalpha;
-
-    TVector3 p_e1;
-    TVector3 p_e2;
-    double n_e1;
-    double n_e2;
-
-
-    // ------------------------------------------------------------------------
-    // Containers for reading data and for storing outputs.
-    // Each outer vector index corresponds to a station.
-    // ------------------------------------------------------------------------
-    string line;
-    std::vector< std::vector<double> > videpth;
-    std::vector< std::vector<double> > vdepth;
-
-    std::vector< std::vector<double> > vdepth_data;
-    std::vector< std::vector<double> > vdepth_data_err;
-
-    std::vector< std::vector<double> > vreversedepth;
-
-
-    std::vector< std::vector<double> > vreceiveangle;
-    std::vector< std::vector<double> > vlaunchangle;
-    std::vector< std::vector<double> > voutput6;
-    std::vector< std::vector<double> > voutput7;
-    std::vector< std::vector<double> > voutput8;
-
-
-    std::vector< std::vector<double> > vtotal_distances;
-    std::vector< std::vector<double> > vtotal_distances_err;
-
-    std::vector< std::vector<double> > vsnrmax;
-    std::vector< std::vector<double> > vsnrmax_err;
-
-    // Various angle diagnostics between propagation direction / eigenvectors
-    std::vector< std::vector<double> > vangle_khat_0_khat_1_2;
-    std::vector< std::vector<double> > vangle_khat_0_khat_2_2;
-    std::vector< std::vector<double> > vangle_khat_1_2_khat_2_2;
-    std::vector< std::vector<double> > vangle_Shat_e1_khat;
-    std::vector< std::vector<double> > vangle_Shat_e2_khat;
-
-    // Ray-tracing path containers (two rays per station?)
-    TVector3 raypath[2][6];
-    TVector3 raypath_n[2][6];
-    std::vector< std::vector< double > > vistep;
-    std::vector< std::vector< std::vector<double> > > vraypos;
-    std::vector< std::vector<double> > vraypath_ne1;
-    std::vector< std::vector<double> > vraypath_ne2;
-
-    // Beam / attenuation vs depth containers
-    std::vector< std::vector<double> > vrxdepth_beam1;
-    std::vector< std::vector<double> > vrxdepth_beam2;
-    std::vector< std::vector<double> > vtxdepth_beam1;
-    std::vector< std::vector<double> > vtxdepth_beam2;
-
-    std::vector< std::vector<double> > vrxdepth_atten;
-    std::vector< std::vector<double> > vrxdepth_notflipped;
-    std::vector< std::vector<double> > vrxdepth_atten_beam;
-    std::vector< std::vector<double> > vrxdepth_atten_power;
-    std::vector< std::vector<double> > vrxdepth_atten_beam_power;
-
-    // Angular evolution of E-field components (theta1/theta2) along the path
-    std::vector< std::vector<double> > vtxdepth_theta1;
-    std::vector< std::vector<double> > vtxdepth_theta2;
-    std::vector< std::vector<double> > vrxdepth_theta1;
-    std::vector< std::vector<double> > vrxdepth_theta2;
-
-    // Same angles, but expressed in a "S-clock" coordinate convention
-    std::vector< std::vector<double> > vtxdepth_theta1_Sclock;
-    std::vector< std::vector<double> > vtxdepth_theta2_Sclock;
-    std::vector< std::vector<double> > vrxdepth_theta1_Sclock;
-    std::vector< std::vector<double> > vrxdepth_theta2_Sclock;
-
-    // E-field polarization angles (and S-clock versions)
-    std::vector< std::vector<double> > vtxdepthE_theta1;
-    std::vector< std::vector<double> > vtxdepthE_theta2;
-    std::vector< std::vector<double> > vrxdepthE_theta1;
-    std::vector< std::vector<double> > vrxdepthE_theta2;
-    std::vector< std::vector<double> > vtxdepthE_theta1_Sclock;
-    std::vector< std::vector<double> > vtxdepthE_theta2_Sclock;
-    std::vector< std::vector<double> > vrxdepthE_theta1_Sclock;
-    std::vector< std::vector<double> > vrxdepthE_theta2_Sclock;
-
-    // Dispersion contributions along the path
-    std::vector< std::vector<double> > vtxdepth_dispersion1;
-    std::vector< std::vector<double> > vtxdepth_dispersion2;
-
-    // Dot products of S/E/D unit vectors with something (TX frame)
-    std::vector< std::vector<double> > vdotShats_tx;
-    std::vector< std::vector<double> > vdotEhats_tx;
-    std::vector< std::vector<double> > vdotDhats_tx;
-
-    // ------------------------------------------------------------------------
-    // A very large set of per-station waveform / voltage / power bookkeeping
-    // containers (r1 and r2 likely refer to two rays / eigenmodes)
-    // ------------------------------------------------------------------------
-    std::vector<std::vector<double>> vV1_r1;
-    std::vector<std::vector<double>> vV1_r1_lpda;
-    std::vector<std::vector<double>> vV2_r1;
-    std::vector<std::vector<double>> vE1_r1;
-    std::vector<std::vector<double>> vE2_r1;
-    std::vector<std::vector<double>> vE1_r2;
-    std::vector<std::vector<double>> vE2_r2;
-    std::vector<std::vector<double>> vV2_r1_lpda;
-    std::vector<std::vector<double>> vV1squared_r1;
-    std::vector<std::vector<double>> vV2squared_r1;
-    std::vector<std::vector<double>> vV1V2_r1;
-    std::vector<std::vector<double>> vV1V2_r1_lpda;
-    std::vector<std::vector<double>> vV1V2_r2;
-    std::vector<std::vector<double>> voppositeV1V2_r2;
-    std::vector<std::vector<double>> voppositeV1V2_r1;
-    std::vector<std::vector<double>> venvelope_minus_r1;
-    std::vector<std::vector<double>> venvelope_minus_r1_lpda;
-    std::vector<std::vector<double>> venvelope_plus_r1;
-    std::vector<std::vector<double>> venvelope_plus_r1_lpda;
-    std::vector<std::vector<double>> vvenvelope_minus_r1;
-    std::vector<std::vector<double>> vvenvelope_plus_r1;
-    std::vector<std::vector<double>> vEenvelope_minus_r1;
-    std::vector<std::vector<double>> vEenvelope_plus_r1;
-    std::vector<std::vector<double>> vSenvelope_minus_r1;
-    std::vector<std::vector<double>> vSenvelope_plus_r1;
-    std::vector<std::vector<double>> vpower_r1;
-    std::vector<std::vector<double>> vpoynting_r1;
-    std::vector<std::vector<double>> vpower_r1_lpda;
-
-    std::vector<std::vector<double>> vV1_r2;
-    std::vector<std::vector<double>> vV2_r2;
-    std::vector<std::vector<double>> vV1squared_r2;
-    std::vector<std::vector<double>> vV2squared_r2;
-    std::vector<std::vector<double>> venvelope_minus_r2;
-    std::vector<std::vector<double>> venvelope_plus_r2;
-    std::vector<std::vector<double>> vvenvelope_minus_r2;
-    std::vector<std::vector<double>> vvenvelope_plus_r2;
-    std::vector<std::vector<double>> vEenvelope_minus_r2;
-    std::vector<std::vector<double>> vEenvelope_plus_r2;
-    std::vector<std::vector<double>> vSenvelope_minus_r2;
-    std::vector<std::vector<double>> vSenvelope_plus_r2;
-    std::vector<std::vector<double>> vpower_r2;
-    std::vector<std::vector<double>> vpoynting_r2;
-    std::vector<std::vector<double>> vvoltage_r1;
-    std::vector<std::vector<double>> vfield_r1;
-    std::vector<std::vector<double>> vvoltage_r1_lpda;
-    std::vector<std::vector<double>> vvoltage_r2;
-    std::vector<std::vector<double>> vfield_r2;
-
-    // Polarization vectors along the ray (per station)
-    std::vector<std::vector<TVector3>> pol_r1;
-    std::vector<std::vector<TVector3>> pol_r2;
-
-    // Dielectric tensor eigenvalues / polarization angles at TX/RX
-    std::vector<std::vector<double>> vepsilon1_tx;
-    std::vector<std::vector<double>> vepsilon2_tx;
-    std::vector<std::vector<double>> vdiffepsilon_tx;
-    std::vector<std::vector<double>> vpolarization_Psi_rx;
-    std::vector<std::vector<double>> vpolarization_Omega_rx;
-    std::vector<std::vector<double>> vEpolarization_Psi_rx;
-    std::vector<std::vector<double>> vEpolarization_Omega_rx;
-    std::vector<std::vector<double>> vEpolarization_reversedepth_Psi_rx;
-    std::vector<std::vector<double>> vEpolarization_reversedepth_Omega_rx;
-    std::vector<std::vector<double>> vpolarization_reversedepth_Psi_rx;
-    std::vector<std::vector<double>> vpolarization_reversedepth_Omega_rx;
-
-
-    std::vector<std::vector<double>> vepsilon1_rx;
-    std::vector<std::vector<double>> vepsilon2_rx;
-    std::vector<std::vector<double>> vdiffepsilon_rx;
-
-    // ------------------------------------------------------------------------
-    // Resize all per-station containers to NSTATIONS (=6).
-    // This sets up empty vectors per station, ready to push_back later.
-    // ------------------------------------------------------------------------
-    vdotShats_tx.resize(6);
-    vdotEhats_tx.resize(6);
-    vdotDhats_tx.resize(6);
-
-    vepsilon1_tx.resize(6);
-    vepsilon2_tx.resize(6);
-    vdiffepsilon_tx.resize(6);
-
-    vepsilon1_rx.resize(6);
-    vepsilon2_rx.resize(6);
-    vdiffepsilon_rx.resize(6);
-
-    vV1_r1.resize(6);
-    vV2_r1.resize(6);
-    vE1_r1.resize(6);
-    vE2_r1.resize(6);
-    vV1_r1_lpda.resize(6);
-    vV2_r1_lpda.resize(6);
-    vV1_r2.resize(6);
-    vV2_r2.resize(6);
-    vE1_r2.resize(6);
-    vE2_r2.resize(6);
-
-    vV1V2_r1.resize(6);
-    vV1V2_r1_lpda.resize(6);
-    vV1V2_r2.resize(6);
-    voppositeV1V2_r2.resize(6);
-    voppositeV1V2_r1.resize(6);
-
-
-    vV1squared_r1.resize(6);
-    vV2squared_r1.resize(6);
-    vV1squared_r2.resize(6);
-    vV2squared_r2.resize(6);
-
-    vpower_r1.resize(6);
-    vpoynting_r1.resize(6);
-    vpower_r1_lpda.resize(6);
-    vpower_r2.resize(6);
-    vpoynting_r2.resize(6);
-    vvoltage_r1.resize(6);
-    vfield_r1.resize(6);
-    vvoltage_r1_lpda.resize(6);
-    vvoltage_r2.resize(6);
-    vfield_r2.resize(6);
-
-    vpolarization_Psi_rx.resize(6);
-    vpolarization_Omega_rx.resize(6);
-    vEpolarization_Psi_rx.resize(6);
-    vEpolarization_Omega_rx.resize(6);
-    vEpolarization_reversedepth_Psi_rx.resize(6);
-    vEpolarization_reversedepth_Omega_rx.resize(6);
-    vpolarization_reversedepth_Psi_rx.resize(6);
-    vpolarization_reversedepth_Omega_rx.resize(6);
-
-    venvelope_minus_r1.resize(6);
-    vSenvelope_minus_r1.resize(6);
-    venvelope_minus_r1_lpda.resize(6);
-    venvelope_plus_r1.resize(6);
-    venvelope_plus_r1_lpda.resize(6);
-    venvelope_minus_r2.resize(6);
-    vSenvelope_minus_r2.resize(6);
-    venvelope_plus_r2.resize(6);
-    vSenvelope_plus_r2.resize(6);
-    vvenvelope_minus_r1.resize(6);
-    vvenvelope_plus_r1.resize(6);
-    vEenvelope_minus_r1.resize(6);
-    vEenvelope_plus_r1.resize(6);
-    vSenvelope_plus_r1.resize(6);
-    vvenvelope_minus_r2.resize(6);
-    vvenvelope_plus_r2.resize(6);
-    vEenvelope_minus_r2.resize(6);
-    vEenvelope_plus_r2.resize(6);
-
-    // Ray path / stepping containers
-    vistep.resize(6);
-    vraypos.resize(6);
-    vraypath_ne1.resize(6);
-    vraypath_ne2.resize(6);
-    vrxdepth_beam1.resize(6);
-    vrxdepth_beam2.resize(6);
-    vtxdepth_beam1.resize(6);
-    vtxdepth_beam2.resize(6);
-
-    vrxdepth_atten.resize(6);
-    vrxdepth_atten_beam.resize(6);
-    vrxdepth_atten_power.resize(6);
-    vrxdepth_atten_beam_power.resize(6);
-    vtxdepth_theta1.resize(6);
-    vtxdepth_theta2.resize(6);
-    vrxdepth_theta1.resize(6);
-    vrxdepthE_theta2.resize(6);
-    vrxdepthE_theta1.resize(6);
-    vrxdepth_theta2.resize(6);
-    vtxdepth_theta1_Sclock.resize(6);
-    vtxdepth_theta2_Sclock.resize(6);
-    vrxdepth_theta1_Sclock.resize(6);
-    vrxdepth_theta2_Sclock.resize(6);
-    vtxdepth_dispersion1.resize(6);
-    vtxdepth_dispersion2.resize(6);
-    vtxdepthE_theta1.resize(6);
-    vtxdepthE_theta2.resize(6);
-    vtxdepthE_theta1_Sclock.resize(6);
-    vtxdepthE_theta2_Sclock.resize(6);
-    vrxdepthE_theta1_Sclock.resize(6);
-    vrxdepthE_theta2_Sclock.resize(6);
-
-    // vraypos[station] is a vector of 3 vectors: x(z), y(z), z(z)
-    for (int istations=0;istations<6;istations++) {
-        vraypos[istations].resize(3);
-    }
+    // Get the station geometry using these nvecs
+    geom.compute_station_geometry(cfg.BIAXIAL, nvec);
+    // Initialize lots of vectors for data
+    StationData data;
+    data.resize_station_vectors(geom.NSTATIONS);
 
     // ------------------------------------------------------------------------
     // Input data files (Dave logs + n1/n2/n3 refractive index profiles)
     // ------------------------------------------------------------------------
     string sfile;
-    if (WHICHPOL==0)
+    if (geom.WHICHPOL==0)
     sfile="dave_data/day359_pol0.log";
-    if (WHICHPOL==1)
+    if (geom.WHICHPOL==1)
     sfile="dave_data/day359_pol1.log";
 
 
     ifstream myfile(sfile.c_str());
     ifstream davea5file("dave_data/a5_amyformat.txt");
 
-    // Depth-dependent principal indices (text files)
-    string sn1file="data/n1.txt";
-    string sn2file="data/n2.txt";
-    string sn3file="data/n3.txt";
+    // Read in the index of refraction data and smooth it
+    Ice_Profile ice(cfg, nvec);
 
-    ifstream n1file(sn1file.c_str());
-    ifstream n2file(sn2file.c_str());
-    ifstream n3file(sn3file.c_str());
-
-    // Depth arrays and refractive index arrays for each principal axis
-    vector<double> vdepths_n1;
-    vector<double> vdepths_n2;
-    vector<double> vdepths_n3;
-
-    vector<double> n1vec;
-    vector<double> n2vec;
-    vector<double> n3vec;
-
-    // Derived quantity vs depth (e.g., V(n1,n2,n3) from birefringence.hh)
-    std::vector<double>  vV;
-
-    // ------------------------------------------------------------------------
-    // Read in depth->n profiles from files.
-    // Each file is assumed to have 1 header token, then 81 rows of: depth n
-    // Convention: store z = -depth so deeper points have more negative z.
-    // ------------------------------------------------------------------------
-    int NDEPTHS_NS=81;
-
-    string stemp;
-    double thisdepth,thisn;
-    double firstn1, firstn2, firstn3;
-
-    // ---- n1(z) ----
-    n1file >> stemp; // discard header token
-    for (int i=0;i<NDEPTHS_NS;i++) {
-        n1file >> thisdepth >> thisn;
-        vdepths_n1.push_back(-1.*thisdepth);   // flip sign
-        n1vec.push_back(thisn);
-    }
-
-    // ---- n2(z) ----
-    n2file >> stemp;
-    for (int i=0;i<NDEPTHS_NS;i++) {
-        n2file >> thisdepth >> thisn;
-        vdepths_n2.push_back(-1.*thisdepth);
-
-        // If fully biaxial, use n2 file.
-        // If uniaxial or isotropic-like modes, force n2=n1.
-        if (BIAXIAL==1)
-            n2vec.push_back(thisn);
-        else if (BIAXIAL==0 || BIAXIAL==-1)
-            n2vec.push_back(n1vec[i]);
-    }
-
-    // ---- n3(z) ----
-    n3file >> stemp;
-    for (int i=0;i<NDEPTHS_NS;i++) {
-        n3file >> thisdepth >> thisn;
-        vdepths_n3.push_back(-1.*thisdepth);
-
-        // If uniaxial or biaxial, use n3 file.
-        // If BIAXIAL==-1 (nearly isotropic), set n3=n1+1e-5 to break degeneracy.
-        if (BIAXIAL==0 || BIAXIAL==1)
-            n3vec.push_back(thisn);
-        else if (BIAXIAL==-1)
-            n3vec.push_back(n1vec[i]+1.E-5);
-    }
-
-    // ------------------------------------------------------------------------
-    // Optional: "constant indicatrix" -> set n1,n2,n3 to their first depth values
-    // at all depths. This removes depth dependence but retains birefringence.
-    // ------------------------------------------------------------------------
-    if (CONSTANTINDICATRIX==1) {
-        firstn1=n1vec[0];
-        firstn2=n2vec[0];
-        firstn3=n3vec[0];
-
-        int thissize=(int)n1vec.size();
-
-        n1vec.clear();
-        n2vec.clear();
-        n3vec.clear();
-
-        for (int i=0;i<thissize;i++) {
-            n1vec.push_back(firstn1);
-            n2vec.push_back(firstn2);
-            n3vec.push_back(firstn3);
-        }
-    }
-
-    // Debug printout of sizes and raw indices
-    cout << "sizes are " << n1vec.size() << "\t" << n2vec.size() << "\t" << n3vec.size() << "\n";
-    cout << "n's are \n";
-    for (int i=0;i<NDEPTHS_NS;i++) {
-        cout << "n1, n2, n3 are " << n1vec[i] << "\t" << n2vec[i] << "\t" << n3vec[i] << "\n";
-    }
-
-    // ------------------------------------------------------------------------
-    // Smooth n1/n2/n3 vs depth using a simple moving average (boxcar) filter.
-    // NSMOOTH=5 -> replace each interior point with average over i-2..i+2.
-    // Edges are left unchanged for the first/last 2 points.
-    // ------------------------------------------------------------------------
-    vector<double> tmp;
-    tmp.resize(n1vec.size());
-    int NSMOOTH=5;
-    int min=(int)(((double)NSMOOTH)/2.);    // = 2 for NSMOOTH=5
-
-    // Copy edges unchanged
-    for (int i=0;i<min;i++) {
-        tmp[i]=n1vec[i];
-    }
-    for (int i=n1vec.size()-(NSMOOTH-min);i<n1vec.size();i++) {
-        tmp[i]=n1vec[i];
-    }
-
-    // Smooth interior points
-    for (int i=min;i<n1vec.size()-(NSMOOTH-min);i++) {
-        double tmpdouble=0.;
-        for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-            tmpdouble+=n1vec[j];
-        }
-        tmpdouble=tmpdouble/(double)NSMOOTH;
-        tmp[i]=tmpdouble;
-    }
-    n1vec=tmp;
-
-    // Repeat smoothing for n2
-    tmp.clear();
-    tmp.resize(n2vec.size());
-
-    min=(int)(((double)NSMOOTH)/2.);
-    for (int i=0;i<min;i++) {
-        tmp[i]=n2vec[i];
-    }
-    for (int i=n2vec.size()-(NSMOOTH-min);i<n2vec.size();i++) {
-        tmp[i]=n2vec[i];
-    }
-    for (int i=min;i<n2vec.size()-(NSMOOTH-min);i++) {
-        double tmpdouble=0.;
-        for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-            tmpdouble+=n2vec[j];
-        }
-        tmpdouble=tmpdouble/(double)NSMOOTH;
-        tmp[i]=tmpdouble;
-    }
-    n2vec=tmp;
-
-    // Repeat smoothing for n3
-    tmp.clear();
-    tmp.resize(n3vec.size());
-
-    min=(int)(((double)NSMOOTH)/2.);
-    for (int i=0;i<min;i++) {
-        tmp[i]=n3vec[i];
-    }
-    for (int i=n3vec.size()-(NSMOOTH-min);i<n3vec.size();i++) {
-        tmp[i]=n3vec[i];
-    }
-    for (int i=min;i<n3vec.size()-(NSMOOTH-min);i++) {
-        double tmpdouble=0.;
-        for (int j=i-min;j<i+(NSMOOTH-min);j++) {
-            tmpdouble+=n3vec[j];
-        }
-        tmpdouble=tmpdouble/(double)NSMOOTH;
-        tmp[i]=tmpdouble;
-    }
-    n3vec=tmp;
 
     // ------------------------------------------------------------------------
     // Build ROOT graphs of n1(z), n2(z), n3(z) for interpolation via Eval(z)
     // ------------------------------------------------------------------------
-    TGraph *gn1=new TGraph(n1vec.size(),&vdepths_n1[0],&n1vec[0]);
-    TGraph *gn2=new TGraph(n2vec.size(),&vdepths_n2[0],&n2vec[0]);
-    TGraph *gn3=new TGraph(n3vec.size(),&vdepths_n3[0],&n3vec[0]);
+    TGraph *gn1=new TGraph(ice.n1vec.size(),&ice.vdepths_n1[0],&ice.n1vec[0]);
+    TGraph *gn2=new TGraph(ice.n2vec.size(),&ice.vdepths_n2[0],&ice.n2vec[0]);
+    TGraph *gn3=new TGraph(ice.n3vec.size(),&ice.vdepths_n3[0],&ice.n3vec[0]);
     TGraph *g_V;
 
     // Compute derived quantity V(z) from the birefringence model (getV in birefringence.hh)
     vector<double> nvec_tmp;
     nvec_tmp.resize(3);
 
-    for (int i=0;i<n1vec.size();i++) {
+    for (int i=0;i<ice.n1vec.size();i++) {
         // Evaluate indices at each depth (using the smoothed/interpolated curves)
-        nvec_tmp[0]=gn1->Eval(vdepths_n1[i]);
-        nvec_tmp[1]=gn2->Eval(vdepths_n2[i]);
-        nvec_tmp[2]=gn3->Eval(vdepths_n3[i]);
-        vV.push_back(getV(nvec_tmp));
+        nvec_tmp[0]=gn1->Eval(ice.vdepths_n1[i]);
+        nvec_tmp[1]=gn2->Eval(ice.vdepths_n2[i]);
+        nvec_tmp[2]=gn3->Eval(ice.vdepths_n3[i]);
+        ice.vV.push_back(getV(nvec_tmp));
     }
 
     // Graph of V(z)
-    g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
+    g_V=new TGraph(ice.vdepths_n1.size(),&ice.vdepths_n1[0],&ice.vV[0]);
 
     // ------------------------------------------------------------------------
     // Declare lots of ROOT TGraphs that will be filled later 
@@ -946,27 +264,6 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     int NSHOTS=640;
 
-    // Resize containers for data (outer size = number of stations)
-    vdepth_data.resize(5);
-    vdepth.resize(6);
-    vreceiveangle.resize(6);
-    vlaunchangle.resize(6);
-    voutput6.resize(6);
-    voutput7.resize(6);
-    voutput8.resize(6);
-    videpth.resize(6);
-    vreversedepth.resize(6);
-    vangle_Shat_e1_khat.resize(6);
-    vangle_Shat_e2_khat.resize(6);
-    vangle_khat_0_khat_1_2.resize(6);
-    vangle_khat_0_khat_2_2.resize(6);
-    vangle_khat_1_2_khat_2_2.resize(6);
-    vsnrmax.resize(6);
-    vtotal_distances.resize(5);
-    vdepth_data_err.resize(5);
-    vsnrmax_err.resize(6);
-    vtotal_distances_err.resize(5);
-
     double running_rms=0.;
     double running_mean=0.;
 
@@ -982,37 +279,37 @@ int main(int argc, char** argv) {
             myfile >> this_station >> this_day >> this_pol >> this_depth >> this_snrmax;
 
             // Rescale SNR to a common reference distance (A1 at -1000 m) for comparisons
-            this_snrmax=this_snrmax*sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1])/sqrt((-1000.-station_depths[0])*(-1000.-station_depths[0])+horizontal_distances[0]*horizontal_distances[0]);
+            this_snrmax=this_snrmax*sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1])/sqrt((-1000.-geom.station_depths[0])*(-1000.-geom.station_depths[0])+geom.horizontal_distances[0]*geom.horizontal_distances[0]);
 
             // Keep positive SNR, and exclude A5 pol0 special case
             if (this_snrmax>0. && !(this_station==5 && this_pol==0)) {
                 
                 // Store depth and SNR for that station
-                vdepth_data[this_station-1].push_back(this_depth);
-                vsnrmax[this_station-1].push_back(this_snrmax);
+                data.vdepth_data[this_station-1].push_back(this_depth);
+                data.vsnrmax[this_station-1].push_back(this_snrmax);
 
                 // Store total geometric distance (straight-line) from pulser to receiver
-                vtotal_distances[this_station-1].push_back(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1]));
+                data.vtotal_distances[this_station-1].push_back(sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1]));
 
                 // Estimate an uncertainty using RMS of last 3 SNR points (when available)
                 if (i>2) {
                     running_mean=0.;
                     running_rms=0.;
                     for (int j=0;j<3;j++) {
-                        running_mean+=vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1];
+                        running_mean+=data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1];
                     }
                     running_mean=running_mean/3.;
 
                     for (int j=0;j<3;j++) {
-                        running_rms+=(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean)*(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean);
+                        running_rms+=(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean)*(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean);
                     }
                     running_rms=sqrt(running_rms/2.);
                 }
 
                 // Store errors (depth/distance errors set to 0 here)
-                vsnrmax_err[this_station-1].push_back(running_rms);
-                vdepth_data_err[this_station-1].push_back(0.);
-                vtotal_distances_err[this_station-1].push_back(0.);
+                data.vsnrmax_err[this_station-1].push_back(running_rms);
+                data.vdepth_data_err[this_station-1].push_back(0.);
+                data.vtotal_distances_err[this_station-1].push_back(0.);
             }
         }
 
@@ -1024,7 +321,7 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     NSHOTS=33;
 
-    if (WHICHPOL==0) {
+    if (geom.WHICHPOL==0) {
         if (davea5file.is_open())
         {
             cout << "i'm reading dave's a5 file.\n";
@@ -1041,11 +338,11 @@ int main(int argc, char** argv) {
 
                 // Keep only positive-SNR entries
                 if (this_snrmax>0.) {
-                    vdepth_data[this_station-1].push_back(this_depth);
+                    data.vdepth_data[this_station-1].push_back(this_depth);
 
                     // Store measured SNR and corresponding straight-line pulser->station distance
-                    vsnrmax[this_station-1].push_back(this_snrmax);
-                    vtotal_distances[this_station-1].push_back(sqrt((this_depth-station_depths[this_station-1])*(this_depth-station_depths[this_station-1])+horizontal_distances[this_station-1]*horizontal_distances[this_station-1]));
+                    data.vsnrmax[this_station-1].push_back(this_snrmax);
+                    data.vtotal_distances[this_station-1].push_back(sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1]));
 
                     // Same running RMS estimate as above:
                     // use the last 3 stored SNR values to estimate a local scatter / uncertainty
@@ -1053,23 +350,23 @@ int main(int argc, char** argv) {
                         running_mean=0.;
                         running_rms=0.;
                         for (int j=0;j<3;j++) {
-                            running_mean+=vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1];
+                            running_mean+=data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1];
                         }
                         running_mean=running_mean/3.;
 
                         for (int j=0;j<3;j++) {
-                            running_rms+=(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean)*(vsnrmax[this_station-1][vsnrmax[this_station-1].size()-j-1]-running_mean);
+                            running_rms+=(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean)*(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean);
                         }
                         // Divide by 2 since this is an RMS estimate over 3 points (N-1 denominator)
                         running_rms=sqrt(running_rms/2.);
 
                     }
                     // Store per-point uncertainties
-                    vsnrmax_err[this_station-1].push_back(running_rms);
+                    data.vsnrmax_err[this_station-1].push_back(running_rms);
 
                     // Depth and distance uncertainties are taken as zero here
-                    vdepth_data_err[this_station-1].push_back(0.);
-                    vtotal_distances_err[this_station-1].push_back(0.);
+                    data.vdepth_data_err[this_station-1].push_back(0.);
+                    data.vtotal_distances_err[this_station-1].push_back(0.);
                 }
             }
 
@@ -1085,24 +382,24 @@ int main(int argc, char** argv) {
     //   step downward by 10 m
     //   take 200 depth values
     //
-    // vdepth[station] stores the pulser depths,
-    // videpth[station] stores the corresponding integer-like indices.
+    // data.vdepth[station] stores the pulser depths,
+    // data.videpth[station] stores the corresponding integer-like indices.
     // ------------------------------------------------------------------------
     double arianna_minpulserdepth=-400.;
     double arianna_pulserstep=10.;
     int NARIANNA_PULSER=200;
-    for (int istations=0;istations<NSTATIONS;istations++) {
+    for (int istations=0;istations<geom.NSTATIONS;istations++) {
         for (int i=0;i<NARIANNA_PULSER;i++) {
-            vdepth[istations].push_back(arianna_minpulserdepth-(double)arianna_pulserstep*(double)i);
-            videpth[istations].push_back((double)i);
+            data.vdepth[istations].push_back(arianna_minpulserdepth-(double)arianna_pulserstep*(double)i);
+            data.videpth[istations].push_back((double)i);
         }
     }
 
     // Build a reversed-depth version, useful for plots where increasing pulser depth
     // (positive number) is more natural than negative height.
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        for (int j=0;j<vdepth[istations].size();j++) {
-            vreversedepth[istations].push_back(-1.*vdepth[istations][vdepth[istations].size()-1-j]);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        for (int j=0;j<data.vdepth[istations].size();j++) {
+            data.vreversedepth[istations].push_back(-1.*data.vdepth[istations][data.vdepth[istations].size()-1-j]);
         }
     }
 
@@ -1113,10 +410,10 @@ int main(int argc, char** argv) {
     //
     // Note: station index 5 (ARIANNA) has no gsnrmax built here.
     // ------------------------------------------------------------------------
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
         if (i!=5)
-        gsnrmax[i]=new TGraph(vsnrmax[i].size(),&vdepth_data[i][0],&vsnrmax[i][0]);
-        g_idepth[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&videpth[i][0]);
+        gsnrmax[i]=new TGraph(data.vsnrmax[i].size(),&data.vdepth_data[i][0],&data.vsnrmax[i][0]);
+        g_idepth[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.videpth[i][0]);
 
 
     }
@@ -1126,14 +423,14 @@ int main(int argc, char** argv) {
     //   igreatestdepth   = index of deepest pulser depth (most negative)
     //   imostshallowdepth= index of shallowest pulser depth (least negative)
     // ------------------------------------------------------------------------
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        igreatestdepth[istations]=0;
-        imostshallowdepth[istations]=0;
-        for (int idepth=0;idepth<vdepth[istations].size();idepth++) {
-            if (vdepth[istations][idepth]<vdepth[istations][igreatestdepth[istations]])
-            igreatestdepth[istations]=idepth;
-            if (vdepth[istations][idepth]>vdepth[istations][imostshallowdepth[istations]])
-            imostshallowdepth[istations]=idepth;
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        geom.igreatestdepth[istations]=0;
+        geom.imostshallowdepth[istations]=0;
+        for (int idepth=0;idepth<data.vdepth[istations].size();idepth++) {
+            if (data.vdepth[istations][idepth]<data.vdepth[istations][geom.igreatestdepth[istations]])
+            geom.igreatestdepth[istations]=idepth;
+            if (data.vdepth[istations][idepth]>data.vdepth[istations][geom.imostshallowdepth[istations]])
+            geom.imostshallowdepth[istations]=idepth;
         }
 
     }
@@ -1218,19 +515,19 @@ int main(int argc, char** argv) {
     // Fit / model functions and graphs used later for comparing the predicted
     // interference/attenuation envelopes to the measured data.
     // ------------------------------------------------------------------------
-    TF1 *f1[NSTATIONS];
+    TF1 *f1[geom.NSTATIONS];
 
-    TF1 *f1_nointerference[NSTATIONS];
-    TF1 *f1_distances[NSTATIONS];
-    TF1 *f1_nointerference_distances[NSTATIONS];
-    TGraph *g1_distances[NSTATIONS];
-    TGraph *g_atten_beam_distances[NSTATIONS];
-    TGraph *g_atten_beam_crosspol_distances[NSTATIONS];
-    TGraph *g_atten_beam_crosspol_nointerferencefunc_distances[NSTATIONS];
-    TGraph *g_atten_beam_crosspol_func_distances[NSTATIONS];
+    TF1 *f1_nointerference[geom.NSTATIONS];
+    TF1 *f1_distances[geom.NSTATIONS];
+    TF1 *f1_nointerference_distances[geom.NSTATIONS];
+    TGraph *g1_distances[geom.NSTATIONS];
+    TGraph *g_atten_beam_distances[geom.NSTATIONS];
+    TGraph *g_atten_beam_crosspol_distances[geom.NSTATIONS];
+    TGraph *g_atten_beam_crosspol_nointerferencefunc_distances[geom.NSTATIONS];
+    TGraph *g_atten_beam_crosspol_func_distances[geom.NSTATIONS];
 
-    TGraph *g_nsolutions_distances[NSTATIONS];
-    TGraph *g_sumphase_distances[NSTATIONS];
+    TGraph *g_nsolutions_distances[geom.NSTATIONS];
+    TGraph *g_sumphase_distances[geom.NSTATIONS];
 
     // Diagnostic / output spectra are later written out for selected depths
     const int NSPECIALDEPTHS=2;
@@ -1240,7 +537,7 @@ int main(int argc, char** argv) {
     // g_spectra[station][depth_index] will hold the frequency spectrum
     vector< vector<TGraph*> > g_spectra;
 
-    g_spectra.resize(NSTATIONS);
+    g_spectra.resize(geom.NSTATIONS);
     string sfunc;
 
     // Envelope with interference term
@@ -1265,34 +562,34 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     // Graph containers for many derived quantities vs depth
     // ------------------------------------------------------------------------
-    TGraph *g_parameter0[NSTATIONS];
-    TGraph *g_atten[NSTATIONS];
-    TGraph *g_atten_power[NSTATIONS];
+    TGraph *g_parameter0[geom.NSTATIONS];
+    TGraph *g_atten[geom.NSTATIONS];
+    TGraph *g_atten_power[geom.NSTATIONS];
 
-    TGraph *gfunc_noadjust[NSTATIONS];
-    TGraph *g_atten_beam[NSTATIONS];
-    TGraph *g_atten_beam_power[NSTATIONS];
-    TGraph *g_atten_beam_crosspol[NSTATIONS];
+    TGraph *gfunc_noadjust[geom.NSTATIONS];
+    TGraph *g_atten_beam[geom.NSTATIONS];
+    TGraph *g_atten_beam_power[geom.NSTATIONS];
+    TGraph *g_atten_beam_crosspol[geom.NSTATIONS];
 
-    TGraph *g_atten_beam_crosspol_nointerferencefunc[NSTATIONS];
-    TGraph *g_atten_beam_crosspol_func[NSTATIONS];
-    TGraph *g_sumphase[NSTATIONS];
-    TGraph *g_notflipped[NSTATIONS];
-    TGraph *g_deltan[NSTATIONS];
-    TGraph *g_notflipped_alongpath[NSTATIONS];
-    TGraph *g_theta1_alongpath[NSTATIONS];
-    TGraph *g_theta2_alongpath[NSTATIONS];
-    TGraph *g_thetape1_alongpath[NSTATIONS];
-    TGraph *g_thetape2_alongpath[NSTATIONS];
-    TGraph *g_thetape1_phipe1_alongpath[NSTATIONS];
-    TGraph *g_thetape2_phipe2_alongpath[NSTATIONS];
-    TGraph *g_phipe1_alongpath[NSTATIONS];
-    TGraph *g_phipe2_alongpath[NSTATIONS];
-    TGraph *g_deltan_pulserdepth[NSTATIONS];
-    TGraph *g_depth_istep[NSTATIONS];
-    TGraph *g_path[NSTATIONS];
-    TGraph *g_sumlength[NSTATIONS];
-    TGraph *g_attenlengths[NSTATIONS];
+    TGraph *g_atten_beam_crosspol_nointerferencefunc[geom.NSTATIONS];
+    TGraph *g_atten_beam_crosspol_func[geom.NSTATIONS];
+    TGraph *g_sumphase[geom.NSTATIONS];
+    TGraph *g_notflipped[geom.NSTATIONS];
+    TGraph *g_deltan[geom.NSTATIONS];
+    TGraph *g_notflipped_alongpath[geom.NSTATIONS];
+    TGraph *g_theta1_alongpath[geom.NSTATIONS];
+    TGraph *g_theta2_alongpath[geom.NSTATIONS];
+    TGraph *g_thetape1_alongpath[geom.NSTATIONS];
+    TGraph *g_thetape2_alongpath[geom.NSTATIONS];
+    TGraph *g_thetape1_phipe1_alongpath[geom.NSTATIONS];
+    TGraph *g_thetape2_phipe2_alongpath[geom.NSTATIONS];
+    TGraph *g_phipe1_alongpath[geom.NSTATIONS];
+    TGraph *g_phipe2_alongpath[geom.NSTATIONS];
+    TGraph *g_deltan_pulserdepth[geom.NSTATIONS];
+    TGraph *g_depth_istep[geom.NSTATIONS];
+    TGraph *g_path[geom.NSTATIONS];
+    TGraph *g_sumlength[geom.NSTATIONS];
+    TGraph *g_attenlengths[geom.NSTATIONS];
 
     // ------------------------------------------------------------------------
     // "Big picture" scans parameterized by total distance instead of pulser depth.
@@ -1308,12 +605,12 @@ int main(int argc, char** argv) {
 
     vector< vector<double> > vspectrum_bigpic;
 
-    vmag_atten_beam_bigpic.resize(NSTATIONS);
-    vmag_atten_beam_crosspol_bigpic.resize(NSTATIONS);
-    vmag_atten_beam_crosspol_nointerferencefunc_bigpic.resize(NSTATIONS);
-    vmag_atten_beam_crosspol_func_bigpic.resize(NSTATIONS);
-    vtimediff_bigpic.resize(NSTATIONS);
-    vspectrum_bigpic.resize(NSTATIONS);
+    vmag_atten_beam_bigpic.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol_bigpic.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol_nointerferencefunc_bigpic.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol_func_bigpic.resize(geom.NSTATIONS);
+    vtimediff_bigpic.resize(geom.NSTATIONS);
+    vspectrum_bigpic.resize(geom.NSTATIONS);
 
     const int NDISTANCES_BIGPIC=5000;
     const double STEP=1.;
@@ -1354,35 +651,35 @@ int main(int argc, char** argv) {
     vector< vector< vector<double> > > vattens;
 
     // Resize outer station dimension
-    vistep.resize(NSTATIONS);
-    vmag_parameter0.resize(NSTATIONS);
-    vmag_atten.resize(NSTATIONS);
-    vmag_atten_beam.resize(NSTATIONS);
-    vmag_atten_beam_crosspol.resize(NSTATIONS);
-    vmag_atten_beam_crosspol_nointerferencefunc.resize(NSTATIONS);
-    vmag_atten_beam_crosspol_func.resize(NSTATIONS);
-    vmag_func_noadjust.resize(NSTATIONS);
-    vtimediff.resize(NSTATIONS);
-    vnotflipped.resize(NSTATIONS);
-    vsumlength.resize(NSTATIONS);
-    vdeltan.resize(NSTATIONS);
-    vnotflipped_alongpath.resize(NSTATIONS);
-    vtheta1_alongpath.resize(NSTATIONS);
-    vtheta2_alongpath.resize(NSTATIONS);
-    vthetape1_alongpath.resize(NSTATIONS);
-    vthetape2_alongpath.resize(NSTATIONS);
-    vphipe1_alongpath.resize(NSTATIONS);
-    vphipe2_alongpath.resize(NSTATIONS);
-    vdepth_step.resize(NSTATIONS);
-    vlengths.resize(NSTATIONS);
-    vattenlengths.resize(NSTATIONS);
-    vspectra.resize(NSTATIONS);
-    vattens.resize(NSTATIONS);
+    data.vistep.resize(geom.NSTATIONS);
+    vmag_parameter0.resize(geom.NSTATIONS);
+    vmag_atten.resize(geom.NSTATIONS);
+    vmag_atten_beam.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol_nointerferencefunc.resize(geom.NSTATIONS);
+    vmag_atten_beam_crosspol_func.resize(geom.NSTATIONS);
+    vmag_func_noadjust.resize(geom.NSTATIONS);
+    vtimediff.resize(geom.NSTATIONS);
+    vnotflipped.resize(geom.NSTATIONS);
+    vsumlength.resize(geom.NSTATIONS);
+    vdeltan.resize(geom.NSTATIONS);
+    vnotflipped_alongpath.resize(geom.NSTATIONS);
+    vtheta1_alongpath.resize(geom.NSTATIONS);
+    vtheta2_alongpath.resize(geom.NSTATIONS);
+    vthetape1_alongpath.resize(geom.NSTATIONS);
+    vthetape2_alongpath.resize(geom.NSTATIONS);
+    vphipe1_alongpath.resize(geom.NSTATIONS);
+    vphipe2_alongpath.resize(geom.NSTATIONS);
+    vdepth_step.resize(geom.NSTATIONS);
+    vlengths.resize(geom.NSTATIONS);
+    vattenlengths.resize(geom.NSTATIONS);
+    vspectra.resize(geom.NSTATIONS);
+    vattens.resize(geom.NSTATIONS);
 
-    vdistances_bigpic.resize(NSTATIONS);
-    vpseudodepths_bigpic.resize(NSTATIONS);
+    vdistances_bigpic.resize(geom.NSTATIONS);
+    vpseudodepths_bigpic.resize(geom.NSTATIONS);
 
-    int jmin[NSTATIONS];
+    int jmin[geom.NSTATIONS];
 
     // ------------------------------------------------------------------------
     // Main per-station physics loop.
@@ -1395,26 +692,37 @@ int main(int argc, char** argv) {
     //   - accumulate attenuation and birefringent phase
     //   - compute TX/RX polarization projections and beam factors
     // ------------------------------------------------------------------------    
-    for (int i=minstation;i<=maxstation;i++) {
-        vmag_atten_beam[i].resize(vdepth[i].size());
-        vmag_atten_beam_crosspol[i].resize(vdepth[i].size());
-        vmag_atten_beam_crosspol_nointerferencefunc[i].resize(vdepth[i].size());
-        vmag_atten_beam_crosspol_func[i].resize(vdepth[i].size());
-        vspectra[i].resize(vdepth[i].size());
-        vattens[i].resize(vdepth[i].size());
-        g_spectra[i].resize(vdepth[i].size());
-        vmag_atten[i].resize(vdepth[i].size());
-        vmag_parameter0[i].resize(vdepth[i].size());
-        vmag_func_noadjust[i].resize(vdepth[i].size());
+    // MACHTAY: time the idepth loop
+    double uzair_time = 0.0;
+    double overhead = 0.0;
+    double loop_time = 0.0;
+    double eval_time = 0.0;
+    double ray_time = 0.0;
+    double n_e1 = 0.0;
+    double n_e2 = 0.0;
+    TVector3 p_e1;
+    TVector3 p_e2;
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
+	const auto overhead_before = clock::now(); 
+        vmag_atten_beam[i].resize(data.vdepth[i].size());
+        vmag_atten_beam_crosspol[i].resize(data.vdepth[i].size());
+        vmag_atten_beam_crosspol_nointerferencefunc[i].resize(data.vdepth[i].size());
+        vmag_atten_beam_crosspol_func[i].resize(data.vdepth[i].size());
+        vspectra[i].resize(data.vdepth[i].size());
+        vattens[i].resize(data.vdepth[i].size());
+        g_spectra[i].resize(data.vdepth[i].size());
+        vmag_atten[i].resize(data.vdepth[i].size());
+        vmag_parameter0[i].resize(data.vdepth[i].size());
+        vmag_func_noadjust[i].resize(data.vdepth[i].size());
 
         // Measured data vectors only exist for A1-A5, not ARIANNA
         if (i!=5) {
-            vtotal_distances[i].resize(vdepth_data[i].size());
-            vtotal_distances_err[i].resize(vdepth_data[i].size());
+            data.vtotal_distances[i].resize(data.vdepth_data[i].size());
+            data.vtotal_distances_err[i].resize(data.vdepth_data[i].size());
         }
     
         // Smallest possible source-receiver separation is the horizontal distance
-        double mindistance=horizontal_distances[i];
+        double mindistance=geom.horizontal_distances[i];
         jmin[i]=(int)(mindistance/STEP);
 
         // Build a distance scan and convert each distance into an equivalent
@@ -1422,7 +730,7 @@ int main(int argc, char** argv) {
         for (int j=jmin[i]+1;j<NDISTANCES_BIGPIC;j++) {
             double thisdistance=STEP*(double)j;
             vdistances_bigpic[i].push_back(thisdistance);
-            vpseudodepths_bigpic[i].push_back(station_depths[i]-1.*sqrt(thisdistance*thisdistance-mindistance*mindistance));
+            vpseudodepths_bigpic[i].push_back(geom.station_depths[i]-1.*sqrt(thisdistance*thisdistance-mindistance*mindistance));
 
         }
 
@@ -1433,36 +741,37 @@ int main(int argc, char** argv) {
         // --------------------------------------------------------------------
         // Loop over all pulser depths for this station
         // --------------------------------------------------------------------
-        for (int idepth=0;idepth<vdepth[i].size();idepth++) {
+        const auto before = clock::now();
+        for (int idepth=0;idepth<data.vdepth[i].size();idepth++) {
 
             // Reduced 2D geometry for ray tracing:
             // x = horizontal separation, z = depth
             double posstation[2];
-            posstation[0]=sqrt(pow(station_coords[i][0]-pulser_coords[0],2)+pow(station_coords[i][1]-pulser_coords[1],2));
-            posstation[1]=station_depths[i];
+            posstation[0]=sqrt(pow(geom.station_coords[i][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[i][1]-geom.pulser_coords[1],2));
+            posstation[1]=geom.station_depths[i];
             double pospulser[2];
             pospulser[0]=0.;
-            pospulser[1]=vdepth[i][idepth];
+            pospulser[1]=data.vdepth[i][idepth];
 
             // Full 3D pulser position, useful for later geometric interpretation
             TVector3 pospulser3D;
-            pospulser3D.SetX(pulser_coords[0]);
-            pospulser3D.SetY(pulser_coords[1]);
-            pospulser3D.SetZ(vdepth[i][idepth]);
+            pospulser3D.SetX(geom.pulser_coords[0]);
+            pospulser3D.SetY(geom.pulser_coords[1]);
+            pospulser3D.SetZ(data.vdepth[i][idepth]);
 
             // 3D vector from pulser to station
-            pulsertostation[i][0]=(station_coords[i][0]-pulser_coords[0]);
-            pulsertostation[i][1]=(station_coords[i][1]-pulser_coords[1]);
-            pulsertostation[i][2]=station_depths[i]-vdepth[i][idepth];
+            geom.pulsertostation[i][0]=(geom.station_coords[i][0]-geom.pulser_coords[0]);
+            geom.pulsertostation[i][1]=(geom.station_coords[i][1]-geom.pulser_coords[1]);
+            geom.pulsertostation[i][2]=geom.station_depths[i]-data.vdepth[i][idepth];
 
             // Legacy / diagnostic "special" geometry, based on station 0 and the first pulser depth
             double atten_special;
             double pospulser_special[2];
             pospulser_special[0]=0.;
-            pospulser_special[1]=vdepth[0][0];
+            pospulser_special[1]=data.vdepth[0][0];
             double posstation_special[2];
-            posstation_special[0]=sqrt(pow(station_coords[0][0]-pulser_coords[0],2)+pow(station_coords[0][1]-pulser_coords[1],2));
-            posstation_special[1]=station_depths[0];
+            posstation_special[0]=sqrt(pow(geom.station_coords[0][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[0][1]-geom.pulser_coords[1],2));
+            posstation_special[1]=geom.station_depths[0];
 
             // Ray-tracing endpoints
             double x0=0;
@@ -1470,6 +779,8 @@ int main(int argc, char** argv) {
             double x1=posstation[0];
             double z1=posstation[1];
 
+	    // MACHTAY look here:
+	    const auto ray_before = clock::now(); 
             // Solve ray-tracing problem for this pulser depth and station
             double *getresults=IceRayTracing(x0,z0,x1,z1);
 
@@ -1483,13 +794,17 @@ int main(int argc, char** argv) {
             double *paramsre;
 
             // Store outputs from the ray tracer
-            voutput6[i].push_back(getresults[6]);
-            voutput7[i].push_back(getresults[7]);
-            voutput8[i].push_back(getresults[8]);
+            data.voutput6[i].push_back(getresults[6]);
+            data.voutput7[i].push_back(getresults[7]);
+            data.voutput8[i].push_back(getresults[8]);
 
+	    const sec overhead_duration = clock::now() - overhead_before;
+            overhead += static_cast<double>( overhead_duration.count() );
             // ------------------------------------------------------------
             // Determine which ray type exists and build the full ray path
             // ------------------------------------------------------------
+	    // MACHTAY let's measure the time to do raytracing
+//	    const auto ray_before = clock::now(); 
             if (getresults[6]!=-1000) {
                 // Direct ray solution
                 paramsd=GetDirectRayPar(z0,x1,z1);
@@ -1520,6 +835,9 @@ int main(int argc, char** argv) {
                 receive_angle=paramsre[0]/DEGRAD;
                 GetFullReflectedRayPath(z0, x1, z1, LangR, res, zs);
             }
+	    const sec ray_duration = clock::now() - ray_before;
+            ray_time += static_cast<double>( ray_duration.count() );
+
 
             // Running amplitude attenuation factor along the ray
             double atten=1.;
@@ -1539,8 +857,8 @@ int main(int argc, char** argv) {
 
                 // Horizontal unit vector toward the station.
                 // Used to embed the 2D ray-tracing solution back into 3D.
-                TVector3 yhat(station_coords[i][0]-pulser_coords[0],
-                station_coords[i][1]-pulser_coords[1],
+                TVector3 yhat(geom.station_coords[i][0]-geom.pulser_coords[0],
+                geom.station_coords[i][1]-geom.pulser_coords[1],
                 0.);
                 if (yhat.Mag()<HOWSMALLISTOOSMALL)
                 cout << "yhat mag is " << yhat.Mag() << "\n";
@@ -1553,988 +871,1009 @@ int main(int argc, char** argv) {
                 nvec_thisstep.resize(3);
 
                 // Principal axis at the start of the path
-                nvec_thisstep[0]=gn1->Eval(zs[0]);
-                nvec_thisstep[1]=gn2->Eval(zs[0]);
-                nvec_thisstep[2]=gn3->Eval(zs[0]);
-
-                TVector3 rhat_thisstep;
-
-                // First estimate of local ray direction from the first path segment
-                rhat_thisstep[0]=-1.*(res[UZAIRSTEP]-res[0])*yhat[0];
-                rhat_thisstep[1]=-1.*(res[UZAIRSTEP]-res[0])*yhat[1];
-                rhat_thisstep[2]=-1.*(zs[UZAIRSTEP]-zs[0]);
-
-                if (rhat_thisstep.Mag()<1.E-8){
-                    cout << "before calling getDeltaN at place 1, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
-                }
-
-                // Solve local birefringence eigenvalues and eigenvectors for this propagation direction
-                double deltan_alongpath=getDeltaN(BIAXIAL,nvec_thisstep,rhat_thisstep,angle_iceflow,n_e1,n_e2,p_e1,p_e2);
-
-
-                if (p_e2.Mag()<HOWSMALLISTOOSMALL)
-                cout << "1, p_e2 is " << p_e2.Mag();
-
-                // Integral of (+/- delta n)*ds along the ray
-                double deltantimeslength_alongpath=0.;
-
-                // Keep track of previous eigenvectors / flipping state
-                TVector3 p_e1_previous=p_e1;
-                TVector3 p_e2_previous=p_e2;
-                double notflipped_previous=1.;
-                double notflipped_atend=1.;
-                double theta_e1_start=0.;
-                double notflipped=1.;
+			nvec_thisstep[0]=gn1->Eval(zs[0]);
+			nvec_thisstep[1]=gn2->Eval(zs[0]);
+			nvec_thisstep[2]=gn3->Eval(zs[0]);
+
+			TVector3 rhat_thisstep;
+
+			// First estimate of local ray direction from the first path segment
+			rhat_thisstep[0]=-1.*(res[UZAIRSTEP]-res[0])*yhat[0];
+			rhat_thisstep[1]=-1.*(res[UZAIRSTEP]-res[0])*yhat[1];
+			rhat_thisstep[2]=-1.*(zs[UZAIRSTEP]-zs[0]);
+
+			if (rhat_thisstep.Mag()<1.E-8){
+			    cout << "before calling getDeltaN at place 1, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+			}
+
+			// Solve local birefringence eigenvalues and eigenvectors for this propagation direction
+			double deltan_alongpath=getDeltaN(cfg.BIAXIAL,nvec_thisstep,rhat_thisstep,geom.angle_iceflow,n_e1,n_e2,p_e1,p_e2);
+
+
+			if (p_e2.Mag()<HOWSMALLISTOOSMALL)
+			cout << "1, p_e2 is " << p_e2.Mag();
+
+			// Integral of (+/- delta n)*ds along the ray
+			double deltantimeslength_alongpath=0.;
 
-                // --------------------------------------------------------
-                // Step along the traced ray path in chunks of UZAIRSTEP
-                // --------------------------------------------------------
-                for (int istep=UZAIRSTEP;istep<res.size();istep+=UZAIRSTEP) {
+			// Keep track of previous eigenvectors / flipping state
+			TVector3 p_e1_previous=p_e1;
+			TVector3 p_e2_previous=p_e2;
+			double notflipped_previous=1.;
+			double notflipped_atend=1.;
+			double theta_e1_start=0.;
+			double notflipped=1.;
 
-                    nvec_thisstep.resize(3);
+			// --------------------------------------------------------
+			// Step along the traced ray path in chunks of UZAIRSTEP
+			// --------------------------------------------------------
+			// MACHTAY time this loop
 
-                    // Refractive indices at this path point
-                    nvec_thisstep[0]=gn1->Eval(zs[istep]);
-                    nvec_thisstep[1]=gn2->Eval(zs[istep]);
-                    nvec_thisstep[2]=gn3->Eval(zs[istep]);
+			const auto uzair_before = clock::now(); 
+			for (int istep=UZAIRSTEP;istep<res.size();istep+=UZAIRSTEP) {
 
-                    if (istep>0) {
-
-                        // Local propagation direction reconstructed from the discrete path
-                        rhat_thisstep[0]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[0];
-                        rhat_thisstep[1]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[1];
-                        rhat_thisstep[2]=-1.*(zs[istep]-zs[istep-UZAIRSTEP]);
-
-                        // Debugging / illustration printout for A1 near -1000 m
-                        if (i==0 && idepth==g_idepth[i]->Eval(-1000.)) {
-                            if (istep==50) {
-                                cout << "receive angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
-                                cout << "recieve vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
-                                TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
-                                if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
-                                cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
-                                v3dtemp.SetMag(0.075);
-                                cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
-                            }
-                            if (abs((double)(istep-(int)res.size()))<=50) {
-
-                                cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
-                                cout << "launch vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
-                                TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
-                                if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
-                                cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
-                                v3dtemp.SetMag(0.075);
-                                cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
-                            }
-                            if (istep%50==0)
-                            cout << "\\draw[very thick] (" << res[istep-50]/1000. << ",0.," << zs[istep-50]/1000. << ") -- (" << res[istep]/1000. << ",0.," << zs[istep]/1000. << ");\n";
-
-
-                        }
-
-                        // Physical segment length of this path step
-                        double length=rhat_thisstep.Mag();
-
-                        if (rhat_thisstep.Mag()<HOWSMALLISTOOSMALL)
-                        cout << "rhat_thisstep mag is " << rhat_thisstep.Mag() << "\n";
-
-                        // Convert to unit direction for angular calculations
-                        rhat_thisstep.SetMag(1.);
-
-                        // Attenuation length at this depth for the chosen frequency
-                        double atten_length=GetIceAttenuationLength(zs[istep], freq/1.E9);
-
-                        // Amplitude attenuation accumulated along the path
-                        atten*=exp(-1.*length/atten_length);
-
-                        if (rhat_thisstep.Mag()<1.E-8){
-                            cout << "before calling getDeltaN at place 2, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
-                        }
-                        // Update local birefringence splitting and eigenvectors/eigenvalues
-                        deltan_alongpath=getDeltaN(BIAXIAL,nvec_thisstep,rhat_thisstep,angle_iceflow,n_e1,n_e2,p_e1,p_e2);
-
-                        if (p_e2.Mag()<HOWSMALLISTOOSMALL)
-                        cout << "2, p_e2 is " << p_e2.Mag() << "\n";
-
-                        // Save previous eigenvectors in case continuity tracking is needed
-                        p_e1_previous=p_e1;
-                        p_e2_previous=p_e2;
-
-                        // Local dielectric tensor diagonal entries in the principal basis
-                        TVector3 epsilon_thisstep;
-
-                        epsilon_thisstep[0]=nvec_thisstep[0]*nvec_thisstep[0];
-                        epsilon_thisstep[1]=nvec_thisstep[1]*nvec_thisstep[1];
-                        epsilon_thisstep[2]=nvec_thisstep[2]*nvec_thisstep[2];
-
-
-                        // Convert D eigenvectors to electric-field directions
-                        TVector3 E_e1=rotateD(epsilon_thisstep,angle_iceflow,p_e1);
-                        TVector3 E_e2=rotateD(epsilon_thisstep,angle_iceflow,p_e2);
-
-                        // ----------------------------------------------------
-                        // At the final step (TX side in this path convention),
-                        // compute transmitter-side polarization / beam quantities
-                        // ----------------------------------------------------
-                        if (abs((double)(istep-(int)res.size()))<=UZAIRSTEP) {
-
-
-                            if (i==5 && idepth==g_idepth[i]->Eval(-400.))
-                            cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
-
-                            double theta_e1,theta_e2;
-                            double thetaE_e1,thetaE_e2;
-                            double theta_e1_Sclock,theta_e2_Sclock;
-                            double thetaE_e1_Sclock,thetaE_e2_Sclock;
-
-                            TVector3 Shat_e1,Shat_e2;
-
-                            double E_e1_thetacomponent,E_e2_thetacomponent;
-                            double E_e1_phicomponent,E_e2_phicomponent;
-
-                            // Decompose the eigenmodes into the chosen TX cross-pol frame
-                            getManyAnglesontheClock(BIAXIAL,CROSSPOLANGLE_TX,
-                                rhat_thisstep,
-                                p_e1,p_e2,E_e1,E_e2,
-                                theta_e1,theta_e2,thetaE_e1,thetaE_e2,
-                                theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
-                                Shat_e1,Shat_e2,
-                                E_e1_thetacomponent,E_e2_thetacomponent,
-                                E_e1_phicomponent,E_e2_phicomponent);
-
-                            // Store angle between each Poynting vector and propagation direction
-                            vangle_Shat_e1_khat[i].push_back(acos(Shat_e1.Dot(rhat_thisstep)/Shat_e1.Mag()/rhat_thisstep.Mag())*DEGRAD);
-                            vangle_Shat_e2_khat[i].push_back(acos(Shat_e2.Dot(rhat_thisstep)/Shat_e2.Mag()/rhat_thisstep.Mag())*DEGRAD);
-
-                            // Special ordering swap for ARIANNA in the biaxial case
-                            if (i==5 && BIAXIAL==1) {
-                                switchThem(thetaE_e1_Sclock,thetaE_e2_Sclock);
-                                switchThem(theta_e1_Sclock,theta_e2_Sclock);
-                                switchThem(theta_e1,theta_e2);
-                                switchThem(thetaE_e1,thetaE_e2);
-                            }
-
-                            // Verbose diagnostics for selected reference depths
-                            if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-                            i==5 && idepth==g_idepth[i]->Eval(-400.)) {
-
-                                cout << "At Tx:\n";
-                                cout << "A" << i+1 << ", depth is " << vdepth[i][idepth] << "\n";
-
-                                cout << "angle of yhat is " << angle_yhat << "\n";
-
-                                cout << "p_e1 is " << p_e1[0] << "\t" << p_e1[1] << "\t" << p_e1[2] << "\n";
-                                cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
-                                cout << "p_e2 is " << p_e2[0] << "\t" << p_e2[1] << "\t" << p_e2[2] << "\n";
-                                cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
-                                cout << "dot product is " << p_e1[0]*p_e2[0]+p_e1[1]*p_e2[1]+p_e1[2]*p_e2[2] << "\n";
-                                cout << "epsilon is " << epsilon_thisstep[0] << "\t" << epsilon_thisstep[1] << "\t" << epsilon_thisstep[2] << "\n";
-                                cout << "E_e1 is " << E_e1[0] << "\t" << E_e1[1] << "\t" << E_e1[2] << "\n";
-                                cout << "mag of E_e1 is " << E_e1.Mag() << "\n";
-                                cout << "E_e2 is " << E_e2[0] << "\t" << E_e2[1] << "\t" << E_e2[2] << "\n";
-                                cout << "mag of E_e2 is " << E_e2.Mag() << "\n";
-                                cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
-                                cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
-                                cout << "dot product is " << E_e1[0]*E_e2[0]+E_e1[1]*E_e2[1]+E_e1[2]*E_e2[2] << "\n";
-                                cout << "theta_e1, theta_e2 are " << theta_e1 << "\t" << theta_e2 << "\n";
-                                cout << "diff is " << (theta_e1-theta_e2)*DEGRAD << "\n";
-                                cout << "thetaE_e1, thetaE_e2 are " << thetaE_e1 << "\t" << thetaE_e2 << "\n";
-                                cout << "diff is " << (thetaE_e1-thetaE_e2)*DEGRAD << "\n";
-                                cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
-                                cout << "diff is " << (thetaE_e1_Sclock-thetaE_e2_Sclock)*DEGRAD << "\n";
-                                cout << "depth is " << vdepth[i][idepth] << "\n";
-                                cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
-                                cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
-                                cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
-                                cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
-
-                                TVector3 E_e1_temp=E_e1;
-                                TVector3 E_e2_temp=E_e2;
-                                TVector3 Shat_e1_temp=Shat_e1;
-                                TVector3 Shat_e2_temp=Shat_e2;
-                                TVector3 rhat_thisstep_temp=rhat_thisstep;
-
-                                // Total E field from adding the two eigenmode contributions
-                                TVector3 E_total_temp=E_e1_temp+E_e2_temp;
-
-                                TVector3 zaxis(0.,0.,1.);
-
-                                // Rotate so the line of sight lies in the plane of the page
-                                E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
-                                E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
-                                E_total_temp.Rotate(-1.*angle_yhat,zaxis);
-
-                                Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
-                                Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
-                                rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
-
-                                // Rescale for prettier printing / drawing
-                                double scalefactor=0.2/E_total_temp.Mag();
-                                E_total_temp=scalefactor*E_total_temp;
-                                E_e1_temp=scalefactor*E_e1_temp;
-                                E_e2_temp=scalefactor*E_e2_temp;
-
-                                Shat_e1_temp=scalefactor*Shat_e1_temp;
-                                Shat_e2_temp=scalefactor*Shat_e2_temp;
-                                rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
-
-                                cout << "These are rotated so the line of sight from pulser to station is in the plane of the page.\n";
-                                cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
-                                cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
-                                cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
-                                cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
-
-                                cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
-                                cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
-                                cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
-
-                                cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
-                                cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
-                                cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
-
-                                TVector3 D_e1_temp=cos(theta_e1)*p_e1;
-                                TVector3 D_e2_temp=cos(theta_e2)*p_e2;
-
-                                D_e1_temp.Rotate(-1.*angle_yhat,zaxis);
-                                D_e2_temp.Rotate(-1.*angle_yhat,zaxis);
-
-                                cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
-                                cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
-
-                                cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
-                                cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
-                                cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
-                                cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
-                            }
-
-                            // Store orthogonality / alignment diagnostics
-                            vdotShats_tx[i].push_back(Shat_e1.Dot(Shat_e2)/Shat_e1.Mag()/Shat_e2.Mag());
-                            vdotEhats_tx[i].push_back(E_e1.Dot(E_e2)/E_e1.Mag()/E_e2.Mag());
-                            vdotDhats_tx[i].push_back(p_e1.Dot(p_e2)/p_e1.Mag()/p_e2.Mag());
-
-                            if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-                            i==5 && idepth==g_idepth[i]->Eval(-400.)) {
-                                cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
-                                cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
-                                cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
-                            }
-
-                            // Beam factors at the transmitter from the Poynting-vector polar angle
-                            double beam_tx_e1=sin(Shat_e1.Theta());
-                            double beam_tx_e2=sin(Shat_e2.Theta());
-
-                            vtxdepth_beam1[i].push_back(beam_tx_e1);
-                            vtxdepth_beam2[i].push_back(beam_tx_e2);
-
-                            // Store TX angular diagnostics
-                            vtxdepth_theta1[i].push_back(theta_e1*DEGRAD);
-                            vtxdepth_theta2[i].push_back(theta_e2*DEGRAD);
-
-                            vtxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
-                            vtxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
-
-                            vtxdepthE_theta1[i].push_back(thetaE_e1*DEGRAD);
-                            vtxdepthE_theta2[i].push_back(thetaE_e2*DEGRAD);
-
-
-                            vtxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
-                            vtxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
-
-                            // Angle between E and D for each eigenmode
-                            vtxdepth_dispersion1[i].push_back(acos(E_e1.Dot(p_e1)/E_e1.Mag()/p_e1.Mag())*DEGRAD);
-                            vtxdepth_dispersion2[i].push_back(acos(E_e2.Dot(p_e2)/E_e2.Mag()/p_e2.Mag())*DEGRAD);
-
-                            // Convert S-clock angles into epsilon parameters
-                            double epsilon1_tx=0.;
-                            double epsilon2_tx=0.;
-                            thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
-                            epsilon1_tx,epsilon2_tx);
-
-                            if (epsilon2_tx>PI/2.){
-                                epsilon2_tx-=PI;
-                            }
-
-                            vepsilon1_tx[i].push_back(epsilon1_tx*DEGRAD);
-                            vepsilon2_tx[i].push_back(epsilon2_tx*DEGRAD);
-
-                            vdiffepsilon_tx[i].push_back((epsilon2_tx-epsilon1_tx)*DEGRAD);
-
-                            // Store attenuation-only and attenuation×beam estimates at the receiver
-                            vrxdepth_atten[i].push_back(VOLTAGENORM*atten);
-                            vrxdepth_atten_beam[i].push_back(VOLTAGENORM*vrxdepth_beam1[i][idepth]*vtxdepth_beam1[i][idepth]*atten);
-                            vrxdepth_atten_power[i].push_back(VOLTAGENORM*VOLTAGENORM*atten*atten);
-                            vrxdepth_atten_beam_power[i].push_back(VOLTAGENORM*VOLTAGENORM*vrxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth]*vtxdepth_beam1[i][idepth]*vtxdepth_beam1[i][idepth]*atten*atten);
-                            
-                            notflipped_atend=notflipped;
-
-                        }
-
-                        // ----------------------------------------------------
-                        // At the first step (RX side in this convention),
-                        // compute receiver-side polarization / beam quantities
-                        // ----------------------------------------------------
-                        if (istep==UZAIRSTEP) {
-
-                            double theta_e1,theta_e2;
-                            double thetaE_e1,thetaE_e2;
-                            double theta_e1_Sclock,theta_e2_Sclock;
-                            double thetaE_e1_Sclock,thetaE_e2_Sclock;
-
-                            TVector3 Shat_e1,Shat_e2;
-
-                            double E_e1_thetacomponent,E_e2_thetacomponent;
-                            double E_e1_phicomponent,E_e2_phicomponent;
-
-                            // Decompose eigenmodes into the chosen RX cross-pol basis
-                            getManyAnglesontheClock(BIAXIAL,CROSSPOLANGLE_RX,
-                                rhat_thisstep,
-                                p_e1,p_e2,E_e1,E_e2,
-                                theta_e1,theta_e2,thetaE_e1,thetaE_e2,
-                                theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
-                                Shat_e1,Shat_e2,
-                                E_e1_thetacomponent,E_e2_thetacomponent,
-                                E_e1_phicomponent,E_e2_phicomponent);
-
-                            // Reference angle used to determine whether an eigenvector "flips"
-                            theta_e1_start=theta_e1;
-
-                            // Debug diagnostics at selected reference depths
-                            if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-                            i==5 && idepth==g_idepth[i]->Eval(-400.)) {
-                                cout << "At Rx:\n";
-                                cout << "A" << i+1 << ", depth is " << vdepth[i][idepth] << "\n";
-                                cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
-                                cout << "depth is " << vdepth[i][idepth] << "\n";
-
-                                cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
-                                cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
-                                cout << "This points from pulser to station: " << station_coords[i][0]-pulser_coords[0] << "\t" << station_coords[i][1]-pulser_coords[1] << "\t" << station_depths[i]-vdepth[i][idepth] << "\n";
-
-                                cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
-                                cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
-                                cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
-                                TVector3 E_e1_temp=E_e1;
-
-                                TVector3 E_e2_temp=E_e2;
-
-                                TVector3 Shat_e1_temp=Shat_e1;
-                                TVector3 Shat_e2_temp=Shat_e2;
-                                TVector3 rhat_thisstep_temp=rhat_thisstep;
-
-                                TVector3 E_total_temp=E_e1_temp+E_e2_temp;
-
-                                TVector3 zaxis(0.,0.,1.);
-
-                                E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
-                                E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
-                                E_total_temp.Rotate(-1.*angle_yhat,zaxis);
-
-                                Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
-                                Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
-                                rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
-
-                                double scalefactor=0.2/E_total_temp.Mag();
-                                E_total_temp=scalefactor*E_total_temp;
-                                E_e1_temp=scalefactor*E_e1_temp;
-                                E_e2_temp=scalefactor*E_e2_temp;
-
-                                Shat_e1_temp=scalefactor*Shat_e1_temp;
-                                Shat_e2_temp=scalefactor*Shat_e2_temp;
-                                rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
-
-                                cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
-                                cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
-                                cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
-                                cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
-                                cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
-                                cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
-                                cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
-
-                                cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
-                                cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
-                                cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
-
-                                cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
-                                cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
-
-                                TVector3 D_e1_temp=cos(theta_e1)*p_e1;
-                                TVector3 D_e2_temp=cos(theta_e2)*p_e2;
-
-                                cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
-                                cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
-
-                                cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
-                                cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
-                                cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
-                                cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
-                            }
-
-                            // Store RX-side angular diagnostics
-                            vrxdepth_theta1[i].push_back(theta_e1*DEGRAD);
-                            vrxdepth_theta2[i].push_back(theta_e2*DEGRAD);
-
-                            // Note: these two lines store theta_e1/theta_e2 rather than thetaE_e1/thetaE_e2.
-                            // That may be intentional or may deserve a later check.
-                            vrxdepthE_theta1[i].push_back(theta_e1*DEGRAD);
-                            vrxdepthE_theta2[i].push_back(theta_e2*DEGRAD);
-
-                            vrxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
-                            vrxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
-
-
-                            vrxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
-                            vrxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
-
-                            // Convert RX S-clock angles into epsilon parameters
-                            double epsilon1_rx=0.;
-                            double epsilon2_rx=0.;
-
-                            thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
-                                epsilon1_rx,epsilon2_rx);
-
-                            vepsilon1_rx[i].push_back(epsilon1_rx*DEGRAD);
-                            vepsilon2_rx[i].push_back(epsilon2_rx*DEGRAD);
-                            vdiffepsilon_rx[i].push_back((epsilon2_rx-epsilon1_rx)*DEGRAD);
-
-                            // Beam factors at the receiver
-                            double beam_rx_e1=sin(Shat_e1.Theta());
-                            double beam_rx_e2=sin(Shat_e2.Theta());
-
-                            vrxdepth_beam1[i].push_back(beam_rx_e1);
-                            vrxdepth_beam2[i].push_back(beam_rx_e2);
-
-                            // Build an orthonormal receiver polarization basis:
-                            //   Pr2 perpendicular to Shat_e1 and +z
-                            //   Pr1 perpendicular to both Pr2 and Shat_e1
-                            TVector3 plusz(0.,0.,1.);
-                            Pr2[i]=Shat_e1.Cross(plusz);
-                            if (Pr2[i].Mag()<HOWSMALLISTOOSMALL){
-                                cout << "Pr2[i] is " << Pr2[i].Mag() << "\n";
-                            }
-                            Pr2[i].SetMag(1.);
-                            Pr1[i]=Pr2[i].Cross(Shat_e1);
-                            if (Pr1[i].Mag()<HOWSMALLISTOOSMALL){
-                                cout << "Pr1[i] is " << Pr1[i].Mag() << "\n";
-                            }
-                            Pr1[i].SetMag(1.);
-                        }
-
-                        // ----------------------------------------------------
-                        // Update the frequency-dependent attenuation spectrum
-                        // along this path segment
-                        // ----------------------------------------------------
-                        for (int ifreq=0;ifreq<NFREQ;ifreq++) {
-
-
-                            double this_atten_length=GetIceAttenuationLength(zs[istep], vfreqs[ifreq]/1.E9);
-
-                            // Power-like attenuation: two exponential factors
-                            vattens[i][idepth][ifreq] = vattens[i][idepth][ifreq]*exp(-1.*length/this_atten_length)*exp(-1.*length/this_atten_length);
-                        }
-
-                        // Recompute angular decomposition in the "neutral" clock convention
-                        double theta_e1,theta_e2;
-                        double thetaE_e1,thetaE_e2;
-                        double theta_e1_Sclock,theta_e2_Sclock;
-                        double thetaE_e1_Sclock,thetaE_e2_Sclock;
-
-                        TVector3 Shat_e1,Shat_e2;
-
-                        double E_e1_thetacomponent,E_e2_thetacomponent;
-                        double E_e1_phicomponent,E_e2_phicomponent;
-                        getManyAnglesontheClock(BIAXIAL,0.,
-                            rhat_thisstep,
-                            p_e1,p_e2,E_e1,E_e2,
-                            theta_e1,theta_e2,thetaE_e1,thetaE_e2,
-                            theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
-                            Shat_e1,Shat_e2,
-                            E_e1_thetacomponent,E_e2_thetacomponent,
-                            E_e1_phicomponent,E_e2_phicomponent);
-
-                        // Determine whether the eigenvector basis has effectively flipped
-                        // relative to the starting RX-side convention
-                        notflipped=Flipped(theta_e1, theta_e1_start);
-
-                        // Accumulate signed birefringence phase integral
-                        deltantimeslength_alongpath+=deltan_alongpath*length*notflipped;
-                        notflipped_previous=notflipped;
-
-                        // Accumulate geometric path length
-                        sumlength+=length;
-
-                        // Store detailed along-path diagnostics only for a special pulser depth
-                        if (idepth==(int)(g_idepth[i]->Eval(depth_special))) {
-
-                            vtheta1_alongpath[i].push_back(theta_e1*DEGRAD);
-                            vtheta2_alongpath[i].push_back(theta_e2*DEGRAD);
-                            vthetape1_alongpath[i].push_back(p_e1.Theta()*DEGRAD);
-                            vthetape2_alongpath[i].push_back(p_e2.Theta()*DEGRAD);
-                            vphipe1_alongpath[i].push_back(p_e1.Phi()*DEGRAD);
-                            vphipe2_alongpath[i].push_back(p_e2.Phi()*DEGRAD);
-                            vnotflipped_alongpath[i].push_back(notflipped);
-                            vdeltan[i].push_back(deltan_alongpath);
-                            vdepth_step[i].push_back(zs[istep]);
-                            vistep[i].push_back((double)istep);
-                            vlengths[i].push_back(sumlength);
-                            vattenlengths[i].push_back(atten_length);
-                        }
-                    }
-                    else {                        
-                        // Fallback for the first step if needed:
-                        // use the previously stored launch-direction unit vector.
-                        rhat_thisstep=rhat[i];
-                    }
-                }
-
-                // ----------------------------------------------------------------
-                // Convert accumulated birefringence phase integral into a phase.
-                //
-                // deltantimeslength_alongpath has units of (delta n) * length.
-                // Multiplying by (pi / c) * f converts this into the phase used
-                // in the two-mode interference terms below.
-                // ----------------------------------------------------------------
-                sumphase=deltantimeslength_alongpath*PI/TMath::C()*freq;
-
-                // Receiver-side S-clock angles for the two eigenmodes
-                double theta1_Sclock_atrx,theta2_Sclock_atrx;
-
-
-                // ----------------------------------------------------------------
-                // Build the contributions of the two birefringent eigenmodes
-                // to two receiver polarization channels (r1 and r2).
-                //
-                // Interpretation:
-                //   - vV*_r1 / vV*_r2 are voltage-like projected amplitudes
-                //   - vE*_r1 / vE*_r2 are field-like projected amplitudes
-                //
-                // Each contribution includes:
-                //   - attenuation along the path
-                //   - TX projection into a given eigenmode
-                //   - RX projection into channel r1 or r2
-                //   - beam-pattern factors at TX and RX (for voltages)
-                // ----------------------------------------------------------------
-
-                // Mode 1 contribution into receiver channel r1
-                theta1_Sclock_atrx=vrxdepthE_theta1_Sclock[i][idepth];
-                theta2_Sclock_atrx=vrxdepthE_theta2_Sclock[i][idepth];
-
-
-                vV1_r1[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*vtxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth]);
-                vE1_r1[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*vtxdepth_beam1[i][idepth]);
-
-                // Mode 2 contribution into receiver channel r1
-                vV2_r1[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*vtxdepth_beam2[i][idepth]*vrxdepth_beam2[i][idepth]);
-                vE2_r1[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*vtxdepth_beam2[i][idepth]);
-
-                // LPDA-like projection: remove the component parallel to the beam axis
-                vV1_r1_lpda[i].push_back(vV1_r1[i][idepth]*sqrt(1.-vrxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth]));
-                vV2_r1_lpda[i].push_back(vV2_r1[i][idepth]*sqrt(1.-vrxdepth_beam2[i][idepth]*vrxdepth_beam2[i][idepth]));
-
-                // Store quadratic combinations for interference calculations
-                vV1squared_r1[i].push_back(vV1_r1[i][idepth]*vV1_r1[i][idepth]);
-                vV2squared_r1[i].push_back(vV2_r1[i][idepth]*vV2_r1[i][idepth]);
-                vV1V2_r1[i].push_back(vV1_r1[i][idepth]*vV2_r1[i][idepth]);
-
-                // Mode 1 contribution into receiver channel r2
-                vV1_r2[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*vtxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth]);
-                vE1_r2[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*vtxdepth_beam1[i][idepth]);
-
-                // Mode 2 contribution into receiver channel r2
-                vV2_r2[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*vtxdepth_beam2[i][idepth]*vrxdepth_beam2[i][idepth]);
-                vE2_r2[i].push_back(vrxdepth_atten[i][idepth]*cos(vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*vtxdepth_beam2[i][idepth]);
-
-                // More quadratic combinations for the second receiver channel
-                vV1squared_r2[i].push_back(vV1_r2[i][idepth]*vV1_r2[i][idepth]);
-                vV2squared_r2[i].push_back(vV2_r2[i][idepth]*vV2_r2[i][idepth]);
-                vV1V2_r2[i].push_back(vV1_r2[i][idepth]*vV2_r2[i][idepth]);
-
-                // Debug print for a reference pulser depth
-                if (idepth==g_idepth[i]->Eval(-1000.)){
-                    cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << i << "\t" << vV1squared_r2[i][idepth] << "\t" << vV2squared_r2[i][idepth] << "\t" << vV1V2_r2[i][idepth] << "\n";
-                }
-
-                // Negative cross terms, convenient for expressions written as
-                // A+B-2*sqrt(AB)*sin^2(phi) or equivalent forms
-                voppositeV1V2_r2[i].push_back(-1.*vV1_r2[i][idepth]*vV2_r2[i][idepth]);
-                voppositeV1V2_r1[i].push_back(-1.*vV1_r1[i][idepth]*vV2_r1[i][idepth]);
-
-
-                // ----------------------------------------------------------------
-                // Build envelope quantities:
-                //   minus envelope = destructive combination
-                //   plus envelope  = constructive combination
-                //
-                // Versions are stored both for voltage-like quantities and
-                // field/Poynting-like quantities.
-                // ----------------------------------------------------------------
-                venvelope_minus_r1[i].push_back((vV1_r1[i][idepth]-vV2_r1[i][idepth])*(vV1_r1[i][idepth]-vV2_r1[i][idepth]));
-                vSenvelope_minus_r1[i].push_back((vE1_r1[i][idepth]-vE2_r1[i][idepth])*(vE1_r1[i][idepth]-vE2_r1[i][idepth]));
-
-                venvelope_minus_r1_lpda[i].push_back((vV1_r1_lpda[i][idepth]-vV2_r1_lpda[i][idepth])*(vV1_r1_lpda[i][idepth]-vV2_r1_lpda[i][idepth]));
-
-                venvelope_minus_r2[i].push_back((vV1_r2[i][idepth]-vV2_r2[i][idepth])*(vV1_r2[i][idepth]-vV2_r2[i][idepth]));
-                vSenvelope_minus_r2[i].push_back((vE1_r2[i][idepth]-vE2_r2[i][idepth])*(vE1_r2[i][idepth]-vE2_r2[i][idepth]));
-                venvelope_plus_r1[i].push_back((vV2_r1[i][idepth]+vV1_r1[i][idepth])*(vV1_r1[i][idepth]+vV2_r1[i][idepth]));
-                vSenvelope_plus_r1[i].push_back((vE2_r1[i][idepth]+vE1_r1[i][idepth])*(vE1_r1[i][idepth]+vE2_r1[i][idepth]));
-                venvelope_plus_r1_lpda[i].push_back((vV2_r1_lpda[i][idepth]+vV1_r1_lpda[i][idepth])*(vV1_r1_lpda[i][idepth]+vV2_r1_lpda[i][idepth]));
-
-                venvelope_plus_r2[i].push_back((vV2_r2[i][idepth]+vV1_r2[i][idepth])*(vV1_r2[i][idepth]+vV2_r2[i][idepth]));
-                vSenvelope_plus_r2[i].push_back((vE2_r2[i][idepth]+vE1_r2[i][idepth])*(vE1_r2[i][idepth]+vE2_r2[i][idepth]));
-
-                vvenvelope_minus_r1[i].push_back(sqrt((vV1_r1[i][idepth]-vV2_r1[i][idepth])*(vV1_r1[i][idepth]-vV2_r1[i][idepth])));
-                vvenvelope_minus_r2[i].push_back(sqrt((vV1_r2[i][idepth]-vV2_r2[i][idepth])*(vV1_r2[i][idepth]-vV2_r2[i][idepth])));
-                vvenvelope_plus_r1[i].push_back(sqrt((vV2_r1[i][idepth]+vV1_r1[i][idepth])*(vV1_r1[i][idepth]+vV2_r1[i][idepth])));
-                vvenvelope_plus_r2[i].push_back(sqrt((vV2_r2[i][idepth]+vV1_r2[i][idepth])*(vV1_r2[i][idepth]+vV2_r2[i][idepth])));
-
-                vEenvelope_minus_r1[i].push_back(sqrt((vE1_r1[i][idepth]-vE2_r1[i][idepth])*(vE1_r1[i][idepth]-vE2_r1[i][idepth])));
-                vEenvelope_minus_r2[i].push_back(sqrt((vE1_r2[i][idepth]-vE2_r2[i][idepth])*(vE1_r2[i][idepth]-vE2_r2[i][idepth])));
-                vEenvelope_plus_r1[i].push_back(sqrt((vE2_r1[i][idepth]+vE1_r1[i][idepth])*(vE1_r1[i][idepth]+vE2_r1[i][idepth])));
-                vEenvelope_plus_r2[i].push_back(sqrt((vE2_r2[i][idepth]+vE1_r2[i][idepth])*(vE1_r2[i][idepth]+vE2_r2[i][idepth])));
-
-                // ----------------------------------------------------------------
-                // Build a frequency spectrum for this station and pulser depth.
-                //
-                // The phase scales linearly with frequency, so a spectrum is obtained
-                // by re-evaluating the same interference expression at each frequency.
-                // ----------------------------------------------------------------
-                for (int ifreq=0;ifreq<NFREQ;ifreq++) {
-                    double thisfreq=vfreqs[ifreq];
-                    double thissumphase=sumphase*thisfreq/freq;
-
-                    vspectra[i][idepth].push_back(vattens[i][idepth][ifreq]/vrxdepth_atten[i][idepth]*(venvelope_plus_r1[i][idepth]-4*vV1_r1[i][idepth]*vV2_r1[i][idepth]*sin(thissumphase)*sin(thissumphase)));
-                    if (i==5 && idepth==g_idepth[i]->Eval(-1000.))
-                    cout << "i, vattens[i][idepth], vrxdepth_atten[i][idepth], vspectra are " << i << "\t" << vattens[i][idepth][ifreq] << "\t" << vrxdepth_atten[i][idepth] << "\t" << vspectra[i][idepth][ifreq] << "\n";
-                }
-
-                // Time delay corresponding to the accumulated phase difference
-                //   sumphase = pi * f * dt
-                // so dt = sumphase / (pi*f)
-                vtimediff[i].push_back(sumphase/(PI)*1./freq*1.E9);
-
-                // Whether the eigenvector tracking ended in the same orientation sign
-                vnotflipped[i].push_back(notflipped_atend);
-
-                // ----------------------------------------------------------------
-                // Final interference-modified power / Poynting-like quantities
-                // for the two receiver channels.
-                // ----------------------------------------------------------------
-                vpower_r1[i].push_back(venvelope_plus_r1[i][idepth]-4*vV1_r1[i][idepth]*vV2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
-                vpoynting_r1[i].push_back(vSenvelope_plus_r1[i][idepth]-4*vE1_r1[i][idepth]*vE2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
-
-                vpower_r1_lpda[i].push_back(venvelope_plus_r1_lpda[i][idepth]-4*vV1_r1_lpda[i][idepth]*vV2_r1_lpda[i][idepth]*sin(sumphase)*sin(sumphase));
-                vpower_r2[i].push_back(venvelope_plus_r2[i][idepth]-4*vV1_r2[i][idepth]*vV2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
-                vpoynting_r2[i].push_back(vSenvelope_plus_r2[i][idepth]-4*vE1_r2[i][idepth]*vE2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
-
-                // Convert power-like quantities into amplitude-like quantities
-                vvoltage_r1[i].push_back(sqrt(vpower_r1[i][idepth]));
-                vfield_r1[i].push_back(sqrt(vpoynting_r1[i][idepth]));
-                vvoltage_r1_lpda[i].push_back(sqrt(vpower_r1_lpda[i][idepth]));
-                vvoltage_r2[i].push_back(sqrt(vpower_r2[i][idepth]));
-                vfield_r2[i].push_back(sqrt(vpoynting_r2[i][idepth]));
-
-                // Detailed printout at selected reference depths
-                if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-                i==5 && idepth==g_idepth[i]->Eval(-400.)) {
-
-                    cout << "A " << i+1 << ", depth is " << vdepth[i][idepth] << "\n";
-
-                    cout << "before scalefactors:\n";
-                    cout << "powers are " << vpower_r1[i][idepth] << "\t" << vpower_r2[i][idepth] << "\n";
-                    cout << "voltages are " << vvoltage_r1[i][idepth] << "\t" << vvoltage_r2[i][idepth] << "\n";
-                    cout << "lpda voltages are " << vvoltage_r1_lpda[i][idepth] << "\t" << vvoltage_r2[i][idepth] << "\n";
-
-                    // Scale to a convenient display size
-                    double scalefactor=0.2/sqrt(vvoltage_r1[i][idepth]*vvoltage_r1[i][idepth]+vvoltage_r2[i][idepth]*vvoltage_r2[i][idepth]);
-
-                    // Common attenuation × beam prefactor
-                    double prefactor=vrxdepth_atten[i][idepth]*vtxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth];
-                    cout << "voltage r1 is " << scalefactor*vvoltage_r1[i][idepth] << "\n";
-                    cout << "x, z components of voltage r1 are " << vtxdepth_beam1[i][idepth]*scalefactor*vvoltage_r1[i][idepth] << "\t" << sqrt(1.-vtxdepth_beam1[i][idepth]*vtxdepth_beam1[i][idepth])*scalefactor*vvoltage_r1[i][idepth] << "\n";
-
-                    cout << "voltage r2 is " << scalefactor*vvoltage_r2[i][idepth] << "\n";
-                    cout << "polarization angle is " << DEGRAD*atan2(vvoltage_r2[i][idepth],vvoltage_r1[i][idepth]) << "\n";
-                    cout << "thetas_Sclock_atrx are " << theta1_Sclock_atrx << "\t" << theta2_Sclock_atrx << "\n";
-                    cout << "diff is " << (theta1_Sclock_atrx-theta2_Sclock_atrx) << "\n";
-                    cout << "thetas_Sclock_attx are " << vtxdepthE_theta1_Sclock[i][idepth] << "\t" << vtxdepthE_theta2_Sclock[i][idepth] << "\n";
-                    cout << "diff is " << (vtxdepthE_theta1_Sclock[i][idepth]-vtxdepthE_theta2_Sclock[i][idepth]) << "\n";
-
-                    cout << "vV1_r1, vV2_r1 are " << vV1_r1[i][idepth]/prefactor << "\t" << vV2_r1[i][idepth]/prefactor << "\n";
-                    cout << "vV1_r2, vV2_r2 are " << vV1_r2[i][idepth]/prefactor << "\t" << vV2_r2[i][idepth]/prefactor << "\n";
-
-                    cout << "ray 1 at tx is " << scalefactor*vrxdepth_atten[i][idepth]*vtxdepth_beam1[i][idepth]*cos(vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD) << "\n";
-                    cout << "ray 2 at tx is " << scalefactor*vrxdepth_atten[i][idepth]*vtxdepth_beam1[i][idepth]*cos(vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD) << "\n";
-                    cout << "fraction of wavelength is " << sumphase/(2.*PI) << "\n";
-                    cout << "vpower_r1+vpower_r2 \t" <<vpower_r1[i][idepth]+vpower_r2[i][idepth] << "\n";
-                    cout << "prefactor is " << pow(vrxdepth_atten[i][idepth]*vtxdepth_beam1[i][idepth]*vrxdepth_beam1[i][idepth],2) << "\n";
-                    cout << "three factors are " << vrxdepth_atten[i][idepth] << "\t" << vtxdepth_beam1[i][idepth] << "\t" << vrxdepth_beam1[i][idepth] << "\n";
-
-
-                }
-
-                // ----------------------------------------------------------------
-                // Derived polarization observables at the receiver.
-                //
-                // Psi   ~ arctangent of the channel ratio
-                // Omega ~ complementary representation using arccos of normalized r1
-                //
-                // Same quantities are computed both for voltage-like and field-like
-                // amplitudes.
-                // ----------------------------------------------------------------
-                vpolarization_Psi_rx[i].push_back(atan2(vvoltage_r2[i][idepth],vvoltage_r1[i][idepth])*DEGRAD);
-                vpolarization_Omega_rx[i].push_back(acos(vvoltage_r1[i][idepth]/(sqrt(vvoltage_r1[i][idepth]*vvoltage_r1[i][idepth]+vvoltage_r2[i][idepth]*vvoltage_r2[i][idepth])))*DEGRAD);
-                vEpolarization_Psi_rx[i].push_back(atan2(vfield_r2[i][idepth],vfield_r1[i][idepth])*DEGRAD);
-                vEpolarization_Omega_rx[i].push_back(acos(vfield_r1[i][idepth]/(sqrt(vfield_r1[i][idepth]*vfield_r1[i][idepth]+vfield_r2[i][idepth]*vfield_r2[i][idepth])))*DEGRAD);
-
-                // Store total geometric path length
-                vsumlength[i].push_back(sumlength);
-
-                // Refractive indices at the pulser depth itself
-                vector<double> nvec_thisdepth;
-                nvec_thisdepth.resize(3);
-                nvec_thisdepth[0]=gn1->Eval(vdepth[i][idepth]);
-                nvec_thisdepth[1]=gn2->Eval(vdepth[i][idepth]);
-                nvec_thisdepth[2]=gn3->Eval(vdepth[i][idepth]);
-
-                // ----------------------------------------------------------------
-                // Build launch and receive direction unit vectors either from
-                // ray tracing or from simple straight-line geometry.
-                // ----------------------------------------------------------------
-                if (DORAYTRACING) {
-
-                    TVector3 plusz(0.,0.,1.);
-
-                    // Rotation axis that brings +z into the vertical plane of the ray
-                    TVector3 vrotate=plusz.Cross(yhat);
-
-                    if (vrotate.Mag()<HOWSMALLISTOOSMALL){
-                        cout << "vrotate mag is " << vrotate.Mag() << "\n";
-                    }
-
-                    // Launch direction
-                    vrotate.SetMag(1.);
-                    rhat[i]=plusz;
-                    rhat[i].Rotate(launch_angle,vrotate);
-
-                    // Receive direction
-                    rhat_receive[i]=plusz;
-                    rhat_receive[i].Rotate(receive_angle,vrotate);
-
-                }
-                else {
-
-                    // Straight-line approximation if ray tracing is disabled
-                    rhat[i].SetX(station_coords[i][0]-pulser_coords[0]);
-                    rhat[i].SetY(station_coords[i][1]-pulser_coords[1]);
-                    rhat[i].SetZ(station_depths[i]-vdepth[i][idepth]);
-
-                    rhat_receive[i].SetX(rhat[i][0]);
-                    rhat_receive[i].SetY(rhat[i][1]);
-                    rhat_receive[i].SetZ(rhat[i][2]);
-                }
-
-                // Normalize and sanity check
-                if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
-                    cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
-                }
-                rhat[i].SetMag(1.);
-
-                if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
-                    cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
-                }
-                rhat_receive[i].SetMag(1.);
-
-            }
-            else {
-
-                // ----------------------------------------------------------------
-                // If no ray solution was found, fall back to simple straight-line
-                // source-to-station geometry.
-                // ----------------------------------------------------------------
-                rhat[i].SetX(station_coords[i][0]-pulser_coords[0]);
-                rhat[i].SetY(station_coords[i][1]-pulser_coords[1]);
-                rhat[i].SetZ(station_depths[i]-vdepth[i][idepth]);
-
-                rhat_receive[i].SetX(rhat[i][0]);
-                rhat_receive[i].SetY(rhat[i][1]);
-                rhat_receive[i].SetZ(rhat[i][2]);
-            }
-
-            // Store launch and receive polar angles (degrees)
-            vreceiveangle[i].push_back(rhat_receive[i].Theta()*DEGRAD);
-            vlaunchangle[i].push_back(rhat[i].Theta()*DEGRAD);
-
-            // Final normalization / safety checks
-            if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
-                cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
-            }
-
-            rhat[i].SetMag(1.);
-
-            if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
-                cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
-            }
-
-            rhat_receive[i].SetMag(1.);
-        }
-
-        // --------------------------------------------------------------------
-        // Convert all accumulated per-depth vectors into ROOT TGraphs for plotting
-        // and for later writing to output files.
-        // --------------------------------------------------------------------
-        gtxdepth_beam1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_beam1[i][0]);
-        gtxdepth_beam2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_beam2[i][0]);
-
-        grxdepth_beam1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_beam1[i][0]);
-        grxdepth_beam2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_beam2[i][0]);
-
-        grxdepth_atten[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten[i][0]);
-        grxdepth_atten_beam[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten_beam[i][0]);
-        grxdepth_atten_power[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten_power[i][0]);
-        grxdepth_atten_beam_power[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten_beam_power[i][0]);
-
-        gtxdepth_theta1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta1[i][0]);
-        gtxdepth_theta2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta2[i][0]);
-
-        grxdepth_theta1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_theta1[i][0]);
-        grxdepth_theta2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_theta2[i][0]);
-
-        grxdepthE_theta1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepthE_theta1[i][0]);
-        grxdepthE_theta2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepthE_theta2[i][0]);
-
-        gtxdepth_theta1_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta1_Sclock[i][0]);
-        gtxdepth_theta2_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta2_Sclock[i][0]);
-
-        grxdepth_theta1_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_theta1_Sclock[i][0]);
-        grxdepth_theta2_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_theta2_Sclock[i][0]);
-
-        gtxdepth_dispersion1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_dispersion1[i][0]);
-        gtxdepth_dispersion2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_dispersion2[i][0]);
-
-        // Note: these two graphs use vtxdepth_theta1/2 rather than vtxdepthE_theta1/2
-        gtxdepthE_theta1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta1[i][0]);
-        gtxdepthE_theta2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepth_theta2[i][0]);
-
-        gtxdepthE_theta1_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepthE_theta1_Sclock[i][0]);
-        gtxdepthE_theta2_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtxdepthE_theta2_Sclock[i][0]);
-
-        grxdepthE_theta1_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepthE_theta1_Sclock[i][0]);
-        grxdepthE_theta2_Sclock[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepthE_theta2_Sclock[i][0]);
-
-        gdotShats_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vdotShats_tx[i][0]);
-        gdotEhats_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vdotEhats_tx[i][0]);
-        gdotDhats_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vdotDhats_tx[i][0]);
-
-        g_parameter0[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_parameter0[i][0]);
-        g_atten[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_atten[i][0]);
-        g_atten_beam[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_atten_beam[i][0]);
-        g_atten_beam_crosspol[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_atten_beam_crosspol[i][0]);
-        gfunc_noadjust[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_func_noadjust[i][0]);
-        g_atten_beam_crosspol_nointerferencefunc[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_atten_beam_crosspol_nointerferencefunc[i][0]);
-        g_atten_beam_crosspol_func[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vmag_atten_beam_crosspol_func[i][0]);
-        g_sumphase[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vtimediff[i][0]);
-        g_notflipped[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vnotflipped[i][0]);
-        g_sumlength[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vsumlength[i][0]);
-
-        // One frequency spectrum graph per pulser depth
-        for (int idepth=0;idepth<vdepth[i].size();idepth++) {
-            g_spectra[i][idepth]=new TGraph(vfreqs.size(),&vfreqs[0],&vspectra[i][idepth][0]);
-        }
-
-        g_atten_power[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten_power[i][0]);
-        g_atten_beam_power[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vrxdepth_atten_beam_power[i][0]);
-
-        // Voltage / field / interference component graphs
-        gV1_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1_r1[i][0]);
-        gV1_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1_r2[i][0]);
-        gV1squared_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1squared_r1[i][0]);
-        gV1squared_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1squared_r2[i][0]);
-        gpower_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vpower_r1[i][0]);
-        gpower_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vpower_r2[i][0]);
-        gvoltage_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvoltage_r1[i][0]);
-        gvoltage_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvoltage_r2[i][0]);
-        gfield_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vfield_r1[i][0]);
-        gfield_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vfield_r2[i][0]);
-        gV2_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV2_r1[i][0]);
-        gV2_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV2_r2[i][0]);
-        gV1V2_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1V2_r1[i][0]);
-        gV1V2_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV1V2_r2[i][0]);
-        goppositeV1V2_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&voppositeV1V2_r1[i][0]);
-        goppositeV1V2_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&voppositeV1V2_r2[i][0]);
-        gV2squared_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV2squared_r1[i][0]);
-        gV2squared_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vV2squared_r2[i][0]);
-        genvelope_minus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&venvelope_minus_r1[i][0]);
-        genvelope_minus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&venvelope_minus_r2[i][0]);
-        genvelope_plus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&venvelope_plus_r1[i][0]);
-        genvelope_plus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&venvelope_plus_r2[i][0]);
-        gvenvelope_minus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvenvelope_minus_r1[i][0]);
-        gvenvelope_minus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvenvelope_minus_r2[i][0]);
-        gvenvelope_plus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvenvelope_plus_r1[i][0]);
-        gvenvelope_plus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vvenvelope_plus_r2[i][0]);
-        gEenvelope_minus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEenvelope_minus_r1[i][0]);
-        gEenvelope_minus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEenvelope_minus_r2[i][0]);
-        gEenvelope_plus_r1[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEenvelope_plus_r1[i][0]);
-        gEenvelope_plus_r2[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEenvelope_plus_r2[i][0]);
-        gepsilon1_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vepsilon1_tx[i][0]);
-        gepsilon2_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vepsilon2_tx[i][0]);
-
-        // Polarization angle graphs
-        gpolarization_Omega_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vpolarization_Omega_rx[i][0]);
-        gpolarization_Psi_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vpolarization_Psi_rx[i][0]);
-
-        gEpolarization_Omega_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEpolarization_Omega_rx[i][0]);
-        gEpolarization_Psi_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vEpolarization_Psi_rx[i][0]);
-
-        // Build reversed-depth versions for plots that want positive pulser depth
-        for (int j=0;j<vdepth[i].size();j++) {
-            vpolarization_reversedepth_Omega_rx[i].push_back(vpolarization_Omega_rx[i][vpolarization_Omega_rx[i].size()-1-j]);
-            vpolarization_reversedepth_Psi_rx[i].push_back(vpolarization_Psi_rx[i][vpolarization_Psi_rx[i].size()-1-j]);
-            vEpolarization_reversedepth_Omega_rx[i].push_back(vEpolarization_Omega_rx[i][vEpolarization_Omega_rx[i].size()-1-j]);
-            vEpolarization_reversedepth_Psi_rx[i].push_back(vEpolarization_Psi_rx[i][vEpolarization_Psi_rx[i].size()-1-j]);
-
-        }
-
-        gpolarization_reversedepth_Omega_rx[i]=new TGraph(vreversedepth[i].size(),&vreversedepth[i][0],&vpolarization_reversedepth_Omega_rx[i][0]);
-        gpolarization_reversedepth_Psi_rx[i]=new TGraph(vreversedepth[i].size(),&vreversedepth[i][0],&vpolarization_reversedepth_Psi_rx[i][0]);
-
-        gEpolarization_reversedepth_Omega_rx[i]=new TGraph(vreversedepth[i].size(),&vreversedepth[i][0],&vEpolarization_reversedepth_Omega_rx[i][0]);
-        gEpolarization_reversedepth_Psi_rx[i]=new TGraph(vreversedepth[i].size(),&vreversedepth[i][0],&vEpolarization_reversedepth_Psi_rx[i][0]);
-
-        gdiffepsilon_tx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vdiffepsilon_tx[i][0]);
-
-        gepsilon1_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vepsilon1_rx[i][0]);
-        gepsilon2_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vepsilon2_rx[i][0]);
-        gdiffepsilon_rx[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vdiffepsilon_rx[i][0]);
-
-        // Along-path diagnostic graphs for the special pulser depth
-        g_deltan[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vdeltan[i][0]);
-        g_notflipped_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vnotflipped_alongpath[i][0]);
-        g_theta1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vtheta1_alongpath[i][0]);
-        g_theta2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vtheta2_alongpath[i][0]);
-        g_thetape1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vthetape1_alongpath[i][0]);
-        g_thetape2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vthetape2_alongpath[i][0]);
-        g_thetape1_phipe1_alongpath[i]=new TGraph(vphipe1_alongpath[i].size(),&vphipe1_alongpath[i][0],&vthetape1_alongpath[i][0]);
-        g_thetape2_phipe2_alongpath[i]=new TGraph(vphipe2_alongpath[i].size(),&vphipe2_alongpath[i][0],&vthetape2_alongpath[i][0]);
-        g_phipe1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vphipe1_alongpath[i][0]);
-        g_phipe2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vphipe2_alongpath[i][0]);
-        g_deltan_pulserdepth[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&vdeltan[i][0]);
-
-        g_depth_istep[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&vistep[i][0]);
-
-        g_attenlengths[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vattenlengths[i][0]);
-        g_receive_launch[i]=new TGraph(vreceiveangle[i].size(),&vreceiveangle[i][0],&vlaunchangle[i][0]);
-        g_receive[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vreceiveangle[i][0]);
-        g_launch[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vlaunchangle[i][0]);
-        g_output6[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&voutput6[i][0]);
-        g_output7[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&voutput7[i][0]);
-        g_output8[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&voutput8[i][0]);
-
-    }
-
-
-    string filename;
-
-
-    TGraph *g1[NSTATIONS];
+			    nvec_thisstep.resize(3);
+
+			    // Refractive indices at this path point
+			const auto eval_before = clock::now(); 
+			    nvec_thisstep[0]=gn1->Eval(zs[istep]);
+			    nvec_thisstep[1]=gn2->Eval(zs[istep]);
+			    nvec_thisstep[2]=gn3->Eval(zs[istep]);
+			const sec eval_duration = clock::now() - eval_before;
+			eval_time += static_cast<double>( eval_duration.count() );
+
+
+			    if (istep>0) {
+
+				// Local propagation direction reconstructed from the discrete path
+				rhat_thisstep[0]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[0];
+				rhat_thisstep[1]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[1];
+				rhat_thisstep[2]=-1.*(zs[istep]-zs[istep-UZAIRSTEP]);
+
+				// Debugging / illustration printout for A1 near -1000 m
+				if (i==0 && idepth==g_idepth[i]->Eval(-1000.)) {
+				    if (istep==50) {
+					cout << "receive angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "recieve vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
+					TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
+					if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
+					cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
+					v3dtemp.SetMag(0.075);
+					cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
+				    }
+				    if (abs((double)(istep-(int)res.size()))<=50) {
+
+					cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "launch vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
+					TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
+					if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
+					cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
+					v3dtemp.SetMag(0.075);
+					cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
+				    }
+				    if (istep%50==0)
+				    cout << "\\draw[very thick] (" << res[istep-50]/1000. << ",0.," << zs[istep-50]/1000. << ") -- (" << res[istep]/1000. << ",0.," << zs[istep]/1000. << ");\n";
+
+
+				}
+
+				// Physical segment length of this path step
+				double length=rhat_thisstep.Mag();
+
+				if (rhat_thisstep.Mag()<HOWSMALLISTOOSMALL)
+				cout << "rhat_thisstep mag is " << rhat_thisstep.Mag() << "\n";
+
+				// Convert to unit direction for angular calculations
+				rhat_thisstep.SetMag(1.);
+
+				// Attenuation length at this depth for the chosen frequency
+				double atten_length=GetIceAttenuationLength(zs[istep], freq/1.E9);
+
+				// Amplitude attenuation accumulated along the path
+				atten*=exp(-1.*length/atten_length);
+
+				if (rhat_thisstep.Mag()<1.E-8){
+				    cout << "before calling getDeltaN at place 2, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+				}
+				// Update local birefringence splitting and eigenvectors/eigenvalues
+				deltan_alongpath=getDeltaN(cfg.BIAXIAL,nvec_thisstep,rhat_thisstep,geom.angle_iceflow,n_e1,n_e2,p_e1,p_e2);
+
+				if (p_e2.Mag()<HOWSMALLISTOOSMALL)
+				cout << "2, p_e2 is " << p_e2.Mag() << "\n";
+
+				// Save previous eigenvectors in case continuity tracking is needed
+				p_e1_previous=p_e1;
+				p_e2_previous=p_e2;
+
+				// Local dielectric tensor diagonal entries in the principal basis
+				TVector3 epsilon_thisstep;
+
+				epsilon_thisstep[0]=nvec_thisstep[0]*nvec_thisstep[0];
+				epsilon_thisstep[1]=nvec_thisstep[1]*nvec_thisstep[1];
+				epsilon_thisstep[2]=nvec_thisstep[2]*nvec_thisstep[2];
+
+
+				// Convert D eigenvectors to electric-field directions
+				TVector3 E_e1=rotateD(epsilon_thisstep,geom.angle_iceflow,p_e1);
+				TVector3 E_e2=rotateD(epsilon_thisstep,geom.angle_iceflow,p_e2);
+
+				// ----------------------------------------------------
+				// At the final step (TX side in this path convention),
+				// compute transmitter-side polarization / beam quantities
+				// ----------------------------------------------------
+				if (abs((double)(istep-(int)res.size()))<=UZAIRSTEP) {
+
+
+				    if (i==5 && idepth==g_idepth[i]->Eval(-400.))
+				    cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+
+				    double theta_e1,theta_e2;
+				    double thetaE_e1,thetaE_e2;
+				    double theta_e1_Sclock,theta_e2_Sclock;
+				    double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				    TVector3 Shat_e1,Shat_e2;
+
+				    double E_e1_thetacomponent,E_e2_thetacomponent;
+				    double E_e1_phicomponent,E_e2_phicomponent;
+
+				    // Decompose the eigenmodes into the chosen TX cross-pol frame
+				    getManyAnglesontheClock(cfg.BIAXIAL,cfg.CROSSPOLANGLE_TX,
+					rhat_thisstep,
+					p_e1,p_e2,E_e1,E_e2,
+					theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+					theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+					Shat_e1,Shat_e2,
+					E_e1_thetacomponent,E_e2_thetacomponent,
+					E_e1_phicomponent,E_e2_phicomponent);
+
+				    // Store angle between each Poynting vector and propagation direction
+				    data.vangle_Shat_e1_khat[i].push_back(acos(Shat_e1.Dot(rhat_thisstep)/Shat_e1.Mag()/rhat_thisstep.Mag())*DEGRAD);
+				    data.vangle_Shat_e2_khat[i].push_back(acos(Shat_e2.Dot(rhat_thisstep)/Shat_e2.Mag()/rhat_thisstep.Mag())*DEGRAD);
+
+				    // Special ordering swap for ARIANNA in the biaxial case
+				    if (i==5 && cfg.BIAXIAL==1) {
+					switchThem(thetaE_e1_Sclock,thetaE_e2_Sclock);
+					switchThem(theta_e1_Sclock,theta_e2_Sclock);
+					switchThem(theta_e1,theta_e2);
+					switchThem(thetaE_e1,thetaE_e2);
+				    }
+
+				    // Verbose diagnostics for selected reference depths
+				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+
+					cout << "At Tx:\n";
+					cout << "A" << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+
+					cout << "angle of yhat is " << angle_yhat << "\n";
+
+					cout << "p_e1 is " << p_e1[0] << "\t" << p_e1[1] << "\t" << p_e1[2] << "\n";
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "p_e2 is " << p_e2[0] << "\t" << p_e2[1] << "\t" << p_e2[2] << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+					cout << "dot product is " << p_e1[0]*p_e2[0]+p_e1[1]*p_e2[1]+p_e1[2]*p_e2[2] << "\n";
+					cout << "epsilon is " << epsilon_thisstep[0] << "\t" << epsilon_thisstep[1] << "\t" << epsilon_thisstep[2] << "\n";
+					cout << "E_e1 is " << E_e1[0] << "\t" << E_e1[1] << "\t" << E_e1[2] << "\n";
+					cout << "mag of E_e1 is " << E_e1.Mag() << "\n";
+					cout << "E_e2 is " << E_e2[0] << "\t" << E_e2[1] << "\t" << E_e2[2] << "\n";
+					cout << "mag of E_e2 is " << E_e2.Mag() << "\n";
+					cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
+					cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
+					cout << "dot product is " << E_e1[0]*E_e2[0]+E_e1[1]*E_e2[1]+E_e1[2]*E_e2[2] << "\n";
+					cout << "theta_e1, theta_e2 are " << theta_e1 << "\t" << theta_e2 << "\n";
+					cout << "diff is " << (theta_e1-theta_e2)*DEGRAD << "\n";
+					cout << "thetaE_e1, thetaE_e2 are " << thetaE_e1 << "\t" << thetaE_e2 << "\n";
+					cout << "diff is " << (thetaE_e1-thetaE_e2)*DEGRAD << "\n";
+					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
+					cout << "diff is " << (thetaE_e1_Sclock-thetaE_e2_Sclock)*DEGRAD << "\n";
+					cout << "depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+
+					TVector3 E_e1_temp=E_e1;
+					TVector3 E_e2_temp=E_e2;
+					TVector3 Shat_e1_temp=Shat_e1;
+					TVector3 Shat_e2_temp=Shat_e2;
+					TVector3 rhat_thisstep_temp=rhat_thisstep;
+
+					// Total E field from adding the two eigenmode contributions
+					TVector3 E_total_temp=E_e1_temp+E_e2_temp;
+
+					TVector3 zaxis(0.,0.,1.);
+
+					// Rotate so the line of sight lies in the plane of the page
+					E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_total_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					// Rescale for prettier printing / drawing
+					double scalefactor=0.2/E_total_temp.Mag();
+					E_total_temp=scalefactor*E_total_temp;
+					E_e1_temp=scalefactor*E_e1_temp;
+					E_e2_temp=scalefactor*E_e2_temp;
+
+					Shat_e1_temp=scalefactor*Shat_e1_temp;
+					Shat_e2_temp=scalefactor*Shat_e2_temp;
+					rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
+
+					cout << "These are rotated so the line of sight from pulser to station is in the plane of the page.\n";
+					cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
+					cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
+					cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
+					cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
+
+					cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
+					cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
+					cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
+
+					cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
+					cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
+					cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
+
+					TVector3 D_e1_temp=cos(theta_e1)*p_e1;
+					TVector3 D_e2_temp=cos(theta_e2)*p_e2;
+
+					D_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					D_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+
+					cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
+					cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
+					cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
+					cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
+				    }
+
+				    // Store orthogonality / alignment diagnostics
+				    data.vdotShats_tx[i].push_back(Shat_e1.Dot(Shat_e2)/Shat_e1.Mag()/Shat_e2.Mag());
+				    data.vdotEhats_tx[i].push_back(E_e1.Dot(E_e2)/E_e1.Mag()/E_e2.Mag());
+				    data.vdotDhats_tx[i].push_back(p_e1.Dot(p_e2)/p_e1.Mag()/p_e2.Mag());
+
+				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+					cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
+				    }
+
+				    // Beam factors at the transmitter from the Poynting-vector polar angle
+				    double beam_tx_e1=sin(Shat_e1.Theta());
+				    double beam_tx_e2=sin(Shat_e2.Theta());
+
+				    data.vtxdepth_beam1[i].push_back(beam_tx_e1);
+				    data.vtxdepth_beam2[i].push_back(beam_tx_e2);
+
+				    // Store TX angular diagnostics
+				    data.vtxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    data.vtxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    data.vtxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    data.vtxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+
+				    data.vtxdepthE_theta1[i].push_back(thetaE_e1*DEGRAD);
+				    data.vtxdepthE_theta2[i].push_back(thetaE_e2*DEGRAD);
+
+
+				    data.vtxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    data.vtxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+
+				    // Angle between E and D for each eigenmode
+				    data.vtxdepth_dispersion1[i].push_back(acos(E_e1.Dot(p_e1)/E_e1.Mag()/p_e1.Mag())*DEGRAD);
+				    data.vtxdepth_dispersion2[i].push_back(acos(E_e2.Dot(p_e2)/E_e2.Mag()/p_e2.Mag())*DEGRAD);
+
+				    // Convert S-clock angles into epsilon parameters
+				    double epsilon1_tx=0.;
+				    double epsilon2_tx=0.;
+				    thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
+				    epsilon1_tx,epsilon2_tx);
+
+				    if (epsilon2_tx>PI/2.){
+					epsilon2_tx-=PI;
+				    }
+
+				    data.vepsilon1_tx[i].push_back(epsilon1_tx*DEGRAD);
+				    data.vepsilon2_tx[i].push_back(epsilon2_tx*DEGRAD);
+
+				    data.vdiffepsilon_tx[i].push_back((epsilon2_tx-epsilon1_tx)*DEGRAD);
+
+				    // Store attenuation-only and attenuation×beam estimates at the receiver
+				    data.vrxdepth_atten[i].push_back(VOLTAGENORM*atten);
+				    data.vrxdepth_atten_beam[i].push_back(VOLTAGENORM*data.vrxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*atten);
+				    data.vrxdepth_atten_power[i].push_back(VOLTAGENORM*VOLTAGENORM*atten*atten);
+				    data.vrxdepth_atten_beam_power[i].push_back(VOLTAGENORM*VOLTAGENORM*data.vrxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*atten*atten);
+				    
+				    notflipped_atend=notflipped;
+
+				}
+
+				// ----------------------------------------------------
+				// At the first step (RX side in this convention),
+				// compute receiver-side polarization / beam quantities
+				// ----------------------------------------------------
+				if (istep==UZAIRSTEP) {
+
+				    double theta_e1,theta_e2;
+				    double thetaE_e1,thetaE_e2;
+				    double theta_e1_Sclock,theta_e2_Sclock;
+				    double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				    TVector3 Shat_e1,Shat_e2;
+
+				    double E_e1_thetacomponent,E_e2_thetacomponent;
+				    double E_e1_phicomponent,E_e2_phicomponent;
+
+				    // Decompose eigenmodes into the chosen RX cross-pol basis
+				    getManyAnglesontheClock(cfg.BIAXIAL,cfg.CROSSPOLANGLE_RX,
+					rhat_thisstep,
+					p_e1,p_e2,E_e1,E_e2,
+					theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+					theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+					Shat_e1,Shat_e2,
+					E_e1_thetacomponent,E_e2_thetacomponent,
+					E_e1_phicomponent,E_e2_phicomponent);
+
+				    // Reference angle used to determine whether an eigenvector "flips"
+				    theta_e1_start=theta_e1;
+
+				    // Debug diagnostics at selected reference depths
+				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+					cout << "At Rx:\n";
+					cout << "A" << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
+					cout << "depth is " << data.vdepth[i][idepth] << "\n";
+
+					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+					cout << "This points from pulser to station: " << geom.station_coords[i][0]-geom.pulser_coords[0] << "\t" << geom.station_coords[i][1]-geom.pulser_coords[1] << "\t" << geom.station_depths[i]-data.vdepth[i][idepth] << "\n";
+
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+					cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
+					TVector3 E_e1_temp=E_e1;
+
+					TVector3 E_e2_temp=E_e2;
+
+					TVector3 Shat_e1_temp=Shat_e1;
+					TVector3 Shat_e2_temp=Shat_e2;
+					TVector3 rhat_thisstep_temp=rhat_thisstep;
+
+					TVector3 E_total_temp=E_e1_temp+E_e2_temp;
+
+					TVector3 zaxis(0.,0.,1.);
+
+					E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_total_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					double scalefactor=0.2/E_total_temp.Mag();
+					E_total_temp=scalefactor*E_total_temp;
+					E_e1_temp=scalefactor*E_e1_temp;
+					E_e2_temp=scalefactor*E_e2_temp;
+
+					Shat_e1_temp=scalefactor*Shat_e1_temp;
+					Shat_e2_temp=scalefactor*Shat_e2_temp;
+					rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
+
+					cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
+					cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
+					cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
+					cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
+					cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
+					cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
+					cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
+
+					cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
+					cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
+					cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
+
+					cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
+					cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
+
+					TVector3 D_e1_temp=cos(theta_e1)*p_e1;
+					TVector3 D_e2_temp=cos(theta_e2)*p_e2;
+
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+
+					cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
+					cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
+					cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
+					cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
+				    }
+
+				    // Store RX-side angular diagnostics
+				    data.vrxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    data.vrxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    // Note: these two lines store theta_e1/theta_e2 rather than thetaE_e1/thetaE_e2.
+				    // That may be intentional or may deserve a later check.
+				    data.vrxdepthE_theta1[i].push_back(theta_e1*DEGRAD);
+				    data.vrxdepthE_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    data.vrxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    data.vrxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+
+
+				    data.vrxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    data.vrxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+
+				    // Convert RX S-clock angles into epsilon parameters
+				    double epsilon1_rx=0.;
+				    double epsilon2_rx=0.;
+
+				    thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
+					epsilon1_rx,epsilon2_rx);
+
+				    data.vepsilon1_rx[i].push_back(epsilon1_rx*DEGRAD);
+				    data.vepsilon2_rx[i].push_back(epsilon2_rx*DEGRAD);
+				    data.vdiffepsilon_rx[i].push_back((epsilon2_rx-epsilon1_rx)*DEGRAD);
+
+				    // Beam factors at the receiver
+				    double beam_rx_e1=sin(Shat_e1.Theta());
+				    double beam_rx_e2=sin(Shat_e2.Theta());
+
+				    data.vrxdepth_beam1[i].push_back(beam_rx_e1);
+				    data.vrxdepth_beam2[i].push_back(beam_rx_e2);
+
+				    // Build an orthonormal receiver polarization basis:
+				    //   Pr2 perpendicular to Shat_e1 and +z
+				    //   Pr1 perpendicular to both Pr2 and Shat_e1
+				    TVector3 plusz(0.,0.,1.);
+				    Pr2[i]=Shat_e1.Cross(plusz);
+				    if (Pr2[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "Pr2[i] is " << Pr2[i].Mag() << "\n";
+				    }
+				    Pr2[i].SetMag(1.);
+				    Pr1[i]=Pr2[i].Cross(Shat_e1);
+				    if (Pr1[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "Pr1[i] is " << Pr1[i].Mag() << "\n";
+				    }
+				    Pr1[i].SetMag(1.);
+				}
+
+				// ----------------------------------------------------
+				// Update the frequency-dependent attenuation spectrum
+				// along this path segment
+				// ----------------------------------------------------
+				for (int ifreq=0;ifreq<NFREQ;ifreq++) {
+
+
+				    double this_atten_length=GetIceAttenuationLength(zs[istep], cfg.vfreqs[ifreq]/1.E9);
+
+				    // Power-like attenuation: two exponential factors
+				    vattens[i][idepth][ifreq] = vattens[i][idepth][ifreq]*exp(-1.*length/this_atten_length)*exp(-1.*length/this_atten_length);
+				}
+
+				// Recompute angular decomposition in the "neutral" clock convention
+				double theta_e1,theta_e2;
+				double thetaE_e1,thetaE_e2;
+				double theta_e1_Sclock,theta_e2_Sclock;
+				double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				TVector3 Shat_e1,Shat_e2;
+
+				double E_e1_thetacomponent,E_e2_thetacomponent;
+				double E_e1_phicomponent,E_e2_phicomponent;
+				getManyAnglesontheClock(cfg.BIAXIAL,0.,
+				    rhat_thisstep,
+				    p_e1,p_e2,E_e1,E_e2,
+				    theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+				    theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+				    Shat_e1,Shat_e2,
+				    E_e1_thetacomponent,E_e2_thetacomponent,
+				    E_e1_phicomponent,E_e2_phicomponent);
+
+				// Determine whether the eigenvector basis has effectively flipped
+				// relative to the starting RX-side convention
+				notflipped=Flipped(theta_e1, theta_e1_start);
+
+				// Accumulate signed birefringence phase integral
+				deltantimeslength_alongpath+=deltan_alongpath*length*notflipped;
+				notflipped_previous=notflipped;
+
+				// Accumulate geometric path length
+				sumlength+=length;
+
+				// Store detailed along-path diagnostics only for a special pulser depth
+				if (idepth==(int)(g_idepth[i]->Eval(geom.depth_special))) {
+
+				    vtheta1_alongpath[i].push_back(theta_e1*DEGRAD);
+				    vtheta2_alongpath[i].push_back(theta_e2*DEGRAD);
+				    vthetape1_alongpath[i].push_back(p_e1.Theta()*DEGRAD);
+				    vthetape2_alongpath[i].push_back(p_e2.Theta()*DEGRAD);
+				    vphipe1_alongpath[i].push_back(p_e1.Phi()*DEGRAD);
+				    vphipe2_alongpath[i].push_back(p_e2.Phi()*DEGRAD);
+				    vnotflipped_alongpath[i].push_back(notflipped);
+				    vdeltan[i].push_back(deltan_alongpath);
+				    vdepth_step[i].push_back(zs[istep]);
+				    data.vistep[i].push_back((double)istep);
+				    vlengths[i].push_back(sumlength);
+				    vattenlengths[i].push_back(atten_length);
+				}
+			    }
+			    else {                        
+				// Fallback for the first step if needed:
+				// use the previously stored launch-direction unit vector.
+				rhat_thisstep=rhat[i];
+			    }
+			}
+			const sec uzair_duration = clock::now() - uzair_before;
+			uzair_time += static_cast<double>( uzair_duration.count() );
+
+
+			// ----------------------------------------------------------------
+			// Convert accumulated birefringence phase integral into a phase.
+			//
+			// deltantimeslength_alongpath has units of (delta n) * length.
+			// Multiplying by (pi / c) * f converts this into the phase used
+			// in the two-mode interference terms below.
+			// ----------------------------------------------------------------
+			sumphase=deltantimeslength_alongpath*PI/TMath::C()*freq;
+
+			// Receiver-side S-clock angles for the two eigenmodes
+			double theta1_Sclock_atrx,theta2_Sclock_atrx;
+
+
+			// ----------------------------------------------------------------
+			// Build the contributions of the two birefringent eigenmodes
+			// to two receiver polarization channels (r1 and r2).
+			//
+			// Interpretation:
+			//   - vV*_r1 / vV*_r2 are voltage-like projected amplitudes
+			//   - vE*_r1 / vE*_r2 are field-like projected amplitudes
+			//
+			// Each contribution includes:
+			//   - attenuation along the path
+			//   - TX projection into a given eigenmode
+			//   - RX projection into channel r1 or r2
+			//   - beam-pattern factors at TX and RX (for voltages)
+			// ----------------------------------------------------------------
+
+			// Mode 1 contribution into receiver channel r1
+			theta1_Sclock_atrx=data.vrxdepthE_theta1_Sclock[i][idepth];
+			theta2_Sclock_atrx=data.vrxdepthE_theta2_Sclock[i][idepth];
+
+
+			data.vV1_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]);
+			data.vE1_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]);
+
+			// Mode 2 contribution into receiver channel r1
+			data.vV2_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]);
+			data.vE2_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]);
+
+			// LPDA-like projection: remove the component parallel to the beam axis
+			data.vV1_r1_lpda[i].push_back(data.vV1_r1[i][idepth]*sqrt(1.-data.vrxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]));
+			data.vV2_r1_lpda[i].push_back(data.vV2_r1[i][idepth]*sqrt(1.-data.vrxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]));
+
+			// Store quadratic combinations for interference calculations
+			data.vV1squared_r1[i].push_back(data.vV1_r1[i][idepth]*data.vV1_r1[i][idepth]);
+			data.vV2squared_r1[i].push_back(data.vV2_r1[i][idepth]*data.vV2_r1[i][idepth]);
+			data.vV1V2_r1[i].push_back(data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]);
+
+			// Mode 1 contribution into receiver channel r2
+			data.vV1_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]);
+			data.vE1_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]);
+
+			// Mode 2 contribution into receiver channel r2
+			data.vV2_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]);
+			data.vE2_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]);
+
+			// More quadratic combinations for the second receiver channel
+			data.vV1squared_r2[i].push_back(data.vV1_r2[i][idepth]*data.vV1_r2[i][idepth]);
+			data.vV2squared_r2[i].push_back(data.vV2_r2[i][idepth]*data.vV2_r2[i][idepth]);
+			data.vV1V2_r2[i].push_back(data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]);
+
+			// Debug print for a reference pulser depth
+			if (idepth==g_idepth[i]->Eval(-1000.)){
+			    cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << i << "\t" << data.vV1squared_r2[i][idepth] << "\t" << data.vV2squared_r2[i][idepth] << "\t" << data.vV1V2_r2[i][idepth] << "\n";
+			}
+
+			// Negative cross terms, convenient for expressions written as
+			// A+B-2*sqrt(AB)*sin^2(phi) or equivalent forms
+			data.voppositeV1V2_r2[i].push_back(-1.*data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]);
+			data.voppositeV1V2_r1[i].push_back(-1.*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]);
+
+
+			// ----------------------------------------------------------------
+			// Build envelope quantities:
+			//   minus envelope = destructive combination
+			//   plus envelope  = constructive combination
+			//
+			// Versions are stored both for voltage-like quantities and
+			// field/Poynting-like quantities.
+			// ----------------------------------------------------------------
+			data.venvelope_minus_r1[i].push_back((data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])*(data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth]));
+			data.vSenvelope_minus_r1[i].push_back((data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])*(data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth]));
+
+			data.venvelope_minus_r1_lpda[i].push_back((data.vV1_r1_lpda[i][idepth]-data.vV2_r1_lpda[i][idepth])*(data.vV1_r1_lpda[i][idepth]-data.vV2_r1_lpda[i][idepth]));
+
+			data.venvelope_minus_r2[i].push_back((data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])*(data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth]));
+			data.vSenvelope_minus_r2[i].push_back((data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])*(data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth]));
+			data.venvelope_plus_r1[i].push_back((data.vV2_r1[i][idepth]+data.vV1_r1[i][idepth])*(data.vV1_r1[i][idepth]+data.vV2_r1[i][idepth]));
+			data.vSenvelope_plus_r1[i].push_back((data.vE2_r1[i][idepth]+data.vE1_r1[i][idepth])*(data.vE1_r1[i][idepth]+data.vE2_r1[i][idepth]));
+			data.venvelope_plus_r1_lpda[i].push_back((data.vV2_r1_lpda[i][idepth]+data.vV1_r1_lpda[i][idepth])*(data.vV1_r1_lpda[i][idepth]+data.vV2_r1_lpda[i][idepth]));
+
+			data.venvelope_plus_r2[i].push_back((data.vV2_r2[i][idepth]+data.vV1_r2[i][idepth])*(data.vV1_r2[i][idepth]+data.vV2_r2[i][idepth]));
+			data.vSenvelope_plus_r2[i].push_back((data.vE2_r2[i][idepth]+data.vE1_r2[i][idepth])*(data.vE1_r2[i][idepth]+data.vE2_r2[i][idepth]));
+
+			data.vvenvelope_minus_r1[i].push_back(sqrt((data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])*(data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])));
+			data.vvenvelope_minus_r2[i].push_back(sqrt((data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])*(data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])));
+			data.vvenvelope_plus_r1[i].push_back(sqrt((data.vV2_r1[i][idepth]+data.vV1_r1[i][idepth])*(data.vV1_r1[i][idepth]+data.vV2_r1[i][idepth])));
+			data.vvenvelope_plus_r2[i].push_back(sqrt((data.vV2_r2[i][idepth]+data.vV1_r2[i][idepth])*(data.vV1_r2[i][idepth]+data.vV2_r2[i][idepth])));
+
+			data.vEenvelope_minus_r1[i].push_back(sqrt((data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])*(data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])));
+			data.vEenvelope_minus_r2[i].push_back(sqrt((data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])*(data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])));
+			data.vEenvelope_plus_r1[i].push_back(sqrt((data.vE2_r1[i][idepth]+data.vE1_r1[i][idepth])*(data.vE1_r1[i][idepth]+data.vE2_r1[i][idepth])));
+			data.vEenvelope_plus_r2[i].push_back(sqrt((data.vE2_r2[i][idepth]+data.vE1_r2[i][idepth])*(data.vE1_r2[i][idepth]+data.vE2_r2[i][idepth])));
+
+			// ----------------------------------------------------------------
+			// Build a frequency spectrum for this station and pulser depth.
+			//
+			// The phase scales linearly with frequency, so a spectrum is obtained
+			// by re-evaluating the same interference expression at each frequency.
+			// ----------------------------------------------------------------
+			for (int ifreq=0;ifreq<NFREQ;ifreq++) {
+			    double thisfreq=cfg.vfreqs[ifreq];
+			    double thissumphase=sumphase*thisfreq/freq;
+
+			    vspectra[i][idepth].push_back(vattens[i][idepth][ifreq]/data.vrxdepth_atten[i][idepth]*(data.venvelope_plus_r1[i][idepth]-4*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]*sin(thissumphase)*sin(thissumphase)));
+			    if (i==5 && idepth==g_idepth[i]->Eval(-1000.))
+			    cout << "i, vattens[i][idepth], data.vrxdepth_atten[i][idepth], vspectra are " << i << "\t" << vattens[i][idepth][ifreq] << "\t" << data.vrxdepth_atten[i][idepth] << "\t" << vspectra[i][idepth][ifreq] << "\n";
+			}
+
+			// Time delay corresponding to the accumulated phase difference
+			//   sumphase = pi * f * dt
+			// so dt = sumphase / (pi*f)
+			vtimediff[i].push_back(sumphase/(PI)*1./freq*1.E9);
+
+			// Whether the eigenvector tracking ended in the same orientation sign
+			vnotflipped[i].push_back(notflipped_atend);
+
+			// ----------------------------------------------------------------
+			// Final interference-modified power / Poynting-like quantities
+			// for the two receiver channels.
+			// ----------------------------------------------------------------
+			data.vpower_r1[i].push_back(data.venvelope_plus_r1[i][idepth]-4*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+			data.vpoynting_r1[i].push_back(data.vSenvelope_plus_r1[i][idepth]-4*data.vE1_r1[i][idepth]*data.vE2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+
+			data.vpower_r1_lpda[i].push_back(data.venvelope_plus_r1_lpda[i][idepth]-4*data.vV1_r1_lpda[i][idepth]*data.vV2_r1_lpda[i][idepth]*sin(sumphase)*sin(sumphase));
+			data.vpower_r2[i].push_back(data.venvelope_plus_r2[i][idepth]-4*data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+			data.vpoynting_r2[i].push_back(data.vSenvelope_plus_r2[i][idepth]-4*data.vE1_r2[i][idepth]*data.vE2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+
+			// Convert power-like quantities into amplitude-like quantities
+			data.vvoltage_r1[i].push_back(sqrt(data.vpower_r1[i][idepth]));
+			data.vfield_r1[i].push_back(sqrt(data.vpoynting_r1[i][idepth]));
+			data.vvoltage_r1_lpda[i].push_back(sqrt(data.vpower_r1_lpda[i][idepth]));
+			data.vvoltage_r2[i].push_back(sqrt(data.vpower_r2[i][idepth]));
+			data.vfield_r2[i].push_back(sqrt(data.vpoynting_r2[i][idepth]));
+
+			// Detailed printout at selected reference depths
+			if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
+			i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+
+			    cout << "A " << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+
+			    cout << "before scalefactors:\n";
+			    cout << "powers are " << data.vpower_r1[i][idepth] << "\t" << data.vpower_r2[i][idepth] << "\n";
+			    cout << "voltages are " << data.vvoltage_r1[i][idepth] << "\t" << data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "lpda voltages are " << data.vvoltage_r1_lpda[i][idepth] << "\t" << data.vvoltage_r2[i][idepth] << "\n";
+
+			    // Scale to a convenient display size
+			    double scalefactor=0.2/sqrt(data.vvoltage_r1[i][idepth]*data.vvoltage_r1[i][idepth]+data.vvoltage_r2[i][idepth]*data.vvoltage_r2[i][idepth]);
+
+			    // Common attenuation × beam prefactor
+			    double prefactor=data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth];
+			    cout << "voltage r1 is " << scalefactor*data.vvoltage_r1[i][idepth] << "\n";
+			    cout << "x, z components of voltage r1 are " << data.vtxdepth_beam1[i][idepth]*scalefactor*data.vvoltage_r1[i][idepth] << "\t" << sqrt(1.-data.vtxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth])*scalefactor*data.vvoltage_r1[i][idepth] << "\n";
+
+			    cout << "voltage r2 is " << scalefactor*data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "polarization angle is " << DEGRAD*atan2(data.vvoltage_r2[i][idepth],data.vvoltage_r1[i][idepth]) << "\n";
+			    cout << "thetas_Sclock_atrx are " << theta1_Sclock_atrx << "\t" << theta2_Sclock_atrx << "\n";
+			    cout << "diff is " << (theta1_Sclock_atrx-theta2_Sclock_atrx) << "\n";
+			    cout << "thetas_Sclock_attx are " << data.vtxdepthE_theta1_Sclock[i][idepth] << "\t" << data.vtxdepthE_theta2_Sclock[i][idepth] << "\n";
+			    cout << "diff is " << (data.vtxdepthE_theta1_Sclock[i][idepth]-data.vtxdepthE_theta2_Sclock[i][idepth]) << "\n";
+
+			    cout << "data.vV1_r1, data.vV2_r1 are " << data.vV1_r1[i][idepth]/prefactor << "\t" << data.vV2_r1[i][idepth]/prefactor << "\n";
+			    cout << "data.vV1_r2, data.vV2_r2 are " << data.vV1_r2[i][idepth]/prefactor << "\t" << data.vV2_r2[i][idepth]/prefactor << "\n";
+
+			    cout << "ray 1 at tx is " << scalefactor*data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "ray 2 at tx is " << scalefactor*data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "fraction of wavelength is " << sumphase/(2.*PI) << "\n";
+			    cout << "data.vpower_r1+data.vpower_r2 \t" <<data.vpower_r1[i][idepth]+data.vpower_r2[i][idepth] << "\n";
+			    cout << "prefactor is " << pow(data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth],2) << "\n";
+			    cout << "three factors are " << data.vrxdepth_atten[i][idepth] << "\t" << data.vtxdepth_beam1[i][idepth] << "\t" << data.vrxdepth_beam1[i][idepth] << "\n";
+
+
+			}
+
+			// ----------------------------------------------------------------
+			// Derived polarization observables at the receiver.
+			//
+			// Psi   ~ arctangent of the channel ratio
+			// Omega ~ complementary representation using arccos of normalized r1
+			//
+			// Same quantities are computed both for voltage-like and field-like
+			// amplitudes.
+			// ----------------------------------------------------------------
+			data.vpolarization_Psi_rx[i].push_back(atan2(data.vvoltage_r2[i][idepth],data.vvoltage_r1[i][idepth])*DEGRAD);
+			data.vpolarization_Omega_rx[i].push_back(acos(data.vvoltage_r1[i][idepth]/(sqrt(data.vvoltage_r1[i][idepth]*data.vvoltage_r1[i][idepth]+data.vvoltage_r2[i][idepth]*data.vvoltage_r2[i][idepth])))*DEGRAD);
+			data.vEpolarization_Psi_rx[i].push_back(atan2(data.vfield_r2[i][idepth],data.vfield_r1[i][idepth])*DEGRAD);
+			data.vEpolarization_Omega_rx[i].push_back(acos(data.vfield_r1[i][idepth]/(sqrt(data.vfield_r1[i][idepth]*data.vfield_r1[i][idepth]+data.vfield_r2[i][idepth]*data.vfield_r2[i][idepth])))*DEGRAD);
+
+			// Store total geometric path length
+			vsumlength[i].push_back(sumlength);
+
+			// Refractive indices at the pulser depth itself
+			vector<double> nvec_thisdepth;
+			nvec_thisdepth.resize(3);
+			nvec_thisdepth[0]=gn1->Eval(data.vdepth[i][idepth]);
+			nvec_thisdepth[1]=gn2->Eval(data.vdepth[i][idepth]);
+			nvec_thisdepth[2]=gn3->Eval(data.vdepth[i][idepth]);
+
+			// ----------------------------------------------------------------
+			// Build launch and receive direction unit vectors either from
+			// ray tracing or from simple straight-line geometry.
+			// ----------------------------------------------------------------
+			if (geom.DORAYTRACING) {
+
+			    TVector3 plusz(0.,0.,1.);
+
+			    // Rotation axis that brings +z into the vertical plane of the ray
+			    TVector3 vrotate=plusz.Cross(yhat);
+
+			    if (vrotate.Mag()<HOWSMALLISTOOSMALL){
+				cout << "vrotate mag is " << vrotate.Mag() << "\n";
+			    }
+
+			    // Launch direction
+			    vrotate.SetMag(1.);
+			    rhat[i]=plusz;
+			    rhat[i].Rotate(launch_angle,vrotate);
+
+			    // Receive direction
+			    rhat_receive[i]=plusz;
+			    rhat_receive[i].Rotate(receive_angle,vrotate);
+
+			}
+			else {
+
+			    // Straight-line approximation if ray tracing is disabled
+			    rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			    rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			    rhat[i].SetZ(geom.station_depths[i]-data.vdepth[i][idepth]);
+
+			    rhat_receive[i].SetX(rhat[i][0]);
+			    rhat_receive[i].SetY(rhat[i][1]);
+			    rhat_receive[i].SetZ(rhat[i][2]);
+			}
+
+			// Normalize and sanity check
+			if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
+			}
+			rhat[i].SetMag(1.);
+
+			if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
+			}
+			rhat_receive[i].SetMag(1.);
+
+		    }
+		    else {
+
+			// ----------------------------------------------------------------
+			// If no ray solution was found, fall back to simple straight-line
+			// source-to-station geometry.
+			// ----------------------------------------------------------------
+			rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			rhat[i].SetZ(geom.station_depths[i]-data.vdepth[i][idepth]);
+
+			rhat_receive[i].SetX(rhat[i][0]);
+			rhat_receive[i].SetY(rhat[i][1]);
+			rhat_receive[i].SetZ(rhat[i][2]);
+		    }
+
+		    // Store launch and receive polar angles (degrees)
+		    data.vreceiveangle[i].push_back(rhat_receive[i].Theta()*DEGRAD);
+		    data.vlaunchangle[i].push_back(rhat[i].Theta()*DEGRAD);
+
+		    // Final normalization / safety checks
+		    if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
+		    }
+
+		    rhat[i].SetMag(1.);
+
+		    if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
+		    }
+
+		    rhat_receive[i].SetMag(1.);
+		}
+		const sec loop_duration = clock::now() - before;
+		loop_time += static_cast<double>( loop_duration.count() );
+		// --------------------------------------------------------------------
+		// Convert all accumulated per-depth vectors into ROOT TGraphs for plotting
+		// and for later writing to output files.
+		// --------------------------------------------------------------------
+		gtxdepth_beam1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_beam1[i][0]);
+		gtxdepth_beam2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_beam2[i][0]);
+
+		grxdepth_beam1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_beam1[i][0]);
+		grxdepth_beam2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_beam2[i][0]);
+
+		grxdepth_atten[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten[i][0]);
+		grxdepth_atten_beam[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam[i][0]);
+		grxdepth_atten_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_power[i][0]);
+		grxdepth_atten_beam_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam_power[i][0]);
+
+		gtxdepth_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1[i][0]);
+		gtxdepth_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2[i][0]);
+
+		grxdepth_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta1[i][0]);
+		grxdepth_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta2[i][0]);
+
+		grxdepthE_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta1[i][0]);
+		grxdepthE_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta2[i][0]);
+
+		gtxdepth_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1_Sclock[i][0]);
+		gtxdepth_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2_Sclock[i][0]);
+
+		grxdepth_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta1_Sclock[i][0]);
+		grxdepth_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta2_Sclock[i][0]);
+
+		gtxdepth_dispersion1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_dispersion1[i][0]);
+		gtxdepth_dispersion2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_dispersion2[i][0]);
+
+		// Note: these two graphs use data.vtxdepth_theta1/2 rather than data.vtxdepthE_theta1/2
+		gtxdepthE_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1[i][0]);
+		gtxdepthE_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2[i][0]);
+
+		gtxdepthE_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepthE_theta1_Sclock[i][0]);
+		gtxdepthE_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepthE_theta2_Sclock[i][0]);
+
+		grxdepthE_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta1_Sclock[i][0]);
+		grxdepthE_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta2_Sclock[i][0]);
+
+		gdotShats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotShats_tx[i][0]);
+		gdotEhats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotEhats_tx[i][0]);
+		gdotDhats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotDhats_tx[i][0]);
+
+		g_parameter0[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_parameter0[i][0]);
+		g_atten[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten[i][0]);
+		g_atten_beam[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam[i][0]);
+		g_atten_beam_crosspol[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol[i][0]);
+		gfunc_noadjust[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_func_noadjust[i][0]);
+		g_atten_beam_crosspol_nointerferencefunc[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol_nointerferencefunc[i][0]);
+		g_atten_beam_crosspol_func[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol_func[i][0]);
+		g_sumphase[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vtimediff[i][0]);
+		g_notflipped[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vnotflipped[i][0]);
+		g_sumlength[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vsumlength[i][0]);
+
+		// One frequency spectrum graph per pulser depth
+		for (int idepth=0;idepth<data.vdepth[i].size();idepth++) {
+		    g_spectra[i][idepth]=new TGraph(cfg.vfreqs.size(),&cfg.vfreqs[0],&vspectra[i][idepth][0]);
+		}
+
+		g_atten_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_power[i][0]);
+		g_atten_beam_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam_power[i][0]);
+
+		// Voltage / field / interference component graphs
+		gV1_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1_r1[i][0]);
+		gV1_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1_r2[i][0]);
+		gV1squared_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1squared_r1[i][0]);
+		gV1squared_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1squared_r2[i][0]);
+		gpower_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpower_r1[i][0]);
+		gpower_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpower_r2[i][0]);
+		gvoltage_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvoltage_r1[i][0]);
+		gvoltage_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvoltage_r2[i][0]);
+		gfield_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vfield_r1[i][0]);
+		gfield_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vfield_r2[i][0]);
+		gV2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2_r1[i][0]);
+		gV2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2_r2[i][0]);
+		gV1V2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1V2_r1[i][0]);
+		gV1V2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1V2_r2[i][0]);
+		goppositeV1V2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voppositeV1V2_r1[i][0]);
+		goppositeV1V2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voppositeV1V2_r2[i][0]);
+		gV2squared_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2squared_r1[i][0]);
+		gV2squared_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2squared_r2[i][0]);
+		genvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_minus_r1[i][0]);
+		genvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_minus_r2[i][0]);
+		genvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_plus_r1[i][0]);
+		genvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_plus_r2[i][0]);
+		gvenvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_minus_r1[i][0]);
+		gvenvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_minus_r2[i][0]);
+		gvenvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_plus_r1[i][0]);
+		gvenvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_plus_r2[i][0]);
+		gEenvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_minus_r1[i][0]);
+		gEenvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_minus_r2[i][0]);
+		gEenvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_plus_r1[i][0]);
+		gEenvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_plus_r2[i][0]);
+		gepsilon1_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon1_tx[i][0]);
+		gepsilon2_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon2_tx[i][0]);
+
+		// Polarization angle graphs
+		gpolarization_Omega_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpolarization_Omega_rx[i][0]);
+		gpolarization_Psi_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpolarization_Psi_rx[i][0]);
+
+		gEpolarization_Omega_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEpolarization_Omega_rx[i][0]);
+		gEpolarization_Psi_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEpolarization_Psi_rx[i][0]);
+
+		// Build reversed-depth versions for plots that want positive pulser depth
+		for (int j=0;j<data.vdepth[i].size();j++) {
+		    data.vpolarization_reversedepth_Omega_rx[i].push_back(data.vpolarization_Omega_rx[i][data.vpolarization_Omega_rx[i].size()-1-j]);
+		    data.vpolarization_reversedepth_Psi_rx[i].push_back(data.vpolarization_Psi_rx[i][data.vpolarization_Psi_rx[i].size()-1-j]);
+		    data.vEpolarization_reversedepth_Omega_rx[i].push_back(data.vEpolarization_Omega_rx[i][data.vEpolarization_Omega_rx[i].size()-1-j]);
+		    data.vEpolarization_reversedepth_Psi_rx[i].push_back(data.vEpolarization_Psi_rx[i][data.vEpolarization_Psi_rx[i].size()-1-j]);
+
+		}
+
+		gpolarization_reversedepth_Omega_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vpolarization_reversedepth_Omega_rx[i][0]);
+		gpolarization_reversedepth_Psi_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vpolarization_reversedepth_Psi_rx[i][0]);
+
+		gEpolarization_reversedepth_Omega_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vEpolarization_reversedepth_Omega_rx[i][0]);
+		gEpolarization_reversedepth_Psi_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vEpolarization_reversedepth_Psi_rx[i][0]);
+
+		gdiffepsilon_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdiffepsilon_tx[i][0]);
+
+		gepsilon1_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon1_rx[i][0]);
+		gepsilon2_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon2_rx[i][0]);
+		gdiffepsilon_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdiffepsilon_rx[i][0]);
+
+		// Along-path diagnostic graphs for the special pulser depth
+		g_deltan[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vdeltan[i][0]);
+		g_notflipped_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vnotflipped_alongpath[i][0]);
+		g_theta1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vtheta1_alongpath[i][0]);
+		g_theta2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vtheta2_alongpath[i][0]);
+		g_thetape1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vthetape1_alongpath[i][0]);
+		g_thetape2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vthetape2_alongpath[i][0]);
+		g_thetape1_phipe1_alongpath[i]=new TGraph(vphipe1_alongpath[i].size(),&vphipe1_alongpath[i][0],&vthetape1_alongpath[i][0]);
+		g_thetape2_phipe2_alongpath[i]=new TGraph(vphipe2_alongpath[i].size(),&vphipe2_alongpath[i][0],&vthetape2_alongpath[i][0]);
+		g_phipe1_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vphipe1_alongpath[i][0]);
+		g_phipe2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vphipe2_alongpath[i][0]);
+		g_deltan_pulserdepth[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&vdeltan[i][0]);
+
+		g_depth_istep[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&data.vistep[i][0]);
+
+		g_attenlengths[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vattenlengths[i][0]);
+		g_receive_launch[i]=new TGraph(data.vreceiveangle[i].size(),&data.vreceiveangle[i][0],&data.vlaunchangle[i][0]);
+		g_receive[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vreceiveangle[i][0]);
+		g_launch[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vlaunchangle[i][0]);
+		g_output6[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput6[i][0]);
+		g_output7[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput7[i][0]);
+		g_output8[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput8[i][0]);
+
+	    }
+
+	    string filename;
+
+	    // MACHTAY: End function here (skip plotting)
+    cout.clear();
+    const sec duration = clock::now() - start;
+    std::cout << "Uzair time: " << uzair_time << "s" << std::endl;
+    std::cout << "Overhead time: " << overhead << "ms" << std::endl;
+    std::cout << "Eval time: " << eval_time << "s" << std::endl;
+    std::cout << "Raytracing time: " << ray_time << "s" << std::endl;
+    std::cout << "idepth loop duration: " << loop_time << "s" << std::endl;
+    std::cout << "Total duration: " << duration.count() << "s" << std::endl;
+
+    return 0;
+
+    TGraph *g1[geom.NSTATIONS];
 
     // ------------------------------------------------------------------------
     // First main canvas: measured SNR-vs-depth data for each station
@@ -2542,26 +1881,26 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     TCanvas *c1=new TCanvas("c1","c1",800,800);
     c1->Divide(2,3);
-    TH2D *h2[NSTATIONS];
+    TH2D *h2[geom.NSTATIONS];
 
     // Plot limits for SNR/voltage-like quantities by station and polarization
-    double vmax[2][NSTATIONS]={{100.,40.,40.,40.,40.,100.},
+    double vmax[2][geom.NSTATIONS]={{100.,40.,40.,40.,40.,100.},
         {100.,40.,40.,40.,40.,100.}};
 
     // Plot limits for power-like quantities
-    double pmax[2][NSTATIONS]={{1.E5,1.E5,1.E5,1.E5,1.E5,1.E5},
+    double pmax[2][geom.NSTATIONS]={{1.E5,1.E5,1.E5,1.E5,1.E5,1.E5},
         {1.E5,1.E5,1.E5,1.E5,1.E5,1.E5}};
 
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
 
-        h2[i]=new TH2D("h2","h2",200,-1500.,-850,100,0.,vmax[WHICHPOL][i]);
+        h2[i]=new TH2D(Form("h2_%d", i),Form("h2_%d", i),200,-1500.,-850,100,0.,vmax[geom.WHICHPOL][i]);
         h2[i]->SetXTitle("SpiceCore pulser height (m)");
         h2[i]->SetYTitle("V_{SNR}^{max}");
     }
 
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
 
         c1->cd(i+1);
 
@@ -2569,7 +1908,7 @@ int main(int argc, char** argv) {
 
         // Draw measured SNR points where available
         if (i!=5) {
-            g1[i]=new TGraphErrors(vdepth_data[i].size(),&vdepth_data[i][0],&vsnrmax[i][0],&vdepth_data_err[i][0],&vsnrmax_err[i][0]);
+            g1[i]=new TGraphErrors(data.vdepth_data[i].size(),&data.vdepth_data[i][0],&data.vsnrmax[i][0],&data.vdepth_data_err[i][0],&data.vsnrmax_err[i][0]);
             g1[i]->SetMarkerColor(icolors[i]);
             g1[i]->SetMarkerSize(1.);
             g1[i]->SetMarkerStyle(20);
@@ -2577,7 +1916,7 @@ int main(int argc, char** argv) {
         }
 
         // Placeholder for fit-parameter uncertainty extraction
-        deltan_obs_err[i]=f1[i]->GetParError(1);
+        geom.deltan_obs_err[i]=f1[i]->GetParError(1);
 
         // Style model components
         g_parameter0[i]->SetLineWidth(3);
@@ -2621,8 +1960,8 @@ int main(int argc, char** argv) {
 
 
             double posstation[2];
-            posstation[0]=sqrt(pow(station_coords[i][0]-pulser_coords[0],2)+pow(station_coords[i][1]-pulser_coords[1],2));
-            posstation[1]=station_depths[i];
+            posstation[0]=sqrt(pow(geom.station_coords[i][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[i][1]-geom.pulser_coords[1],2));
+            posstation[1]=geom.station_depths[i];
 
             double pospulser[2];
             pospulser[0]=0.;
@@ -2670,8 +2009,8 @@ int main(int argc, char** argv) {
 
             if (getresults[6]!=-1000 || getresults[8]!=-1000) {
 
-                TVector3 yhat(station_coords[i][0]-pulser_coords[0],
-                    station_coords[i][1]-pulser_coords[1],
+                TVector3 yhat(geom.station_coords[i][0]-geom.pulser_coords[0],
+                    geom.station_coords[i][1]-geom.pulser_coords[1],
                     0.);
 
                 if (yhat.Mag()<HOWSMALLISTOOSMALL){
@@ -2708,7 +2047,7 @@ int main(int argc, char** argv) {
                         atten*=exp(-1.*length/atten_length);
 
                         // This computes local delta n but is not yet accumulated into sumphase
-                        double deltan_alongpath=getDeltaN(BIAXIAL,nvec_thisstep,rhat_thisstep,angle_iceflow,n_e1,n_e2,p_e1,p_e2);
+                        double deltan_alongpath=getDeltaN(cfg.BIAXIAL,nvec_thisstep,rhat_thisstep,geom.angle_iceflow,n_e1,n_e2,p_e1,p_e2);
 
                     }
                     else {
@@ -2722,7 +2061,7 @@ int main(int argc, char** argv) {
                 vtimediff_bigpic[i].push_back(sumphase);
 
 
-                if (DORAYTRACING) {
+                if (geom.DORAYTRACING) {
 
                     TVector3 plusz(0.,0.,1.);
 
@@ -2740,9 +2079,9 @@ int main(int argc, char** argv) {
                 }
                 else {
 
-                    rhat[i].SetX(station_coords[i][0]-pulser_coords[0]);
-                    rhat[i].SetY(station_coords[i][1]-pulser_coords[1]);
-                    rhat[i].SetZ(station_depths[i]-vpseudodepths_bigpic[i][j]);
+                    rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+                    rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+                    rhat[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
 
                     rhat_receive[i].SetX(rhat[i][0]);
                     rhat_receive[i].SetY(rhat[i][1]);
@@ -2753,9 +2092,9 @@ int main(int argc, char** argv) {
             else {
 
                 // Straight-line fallback if no ray solution exists
-                rhat[i].SetX(station_coords[i][0]-pulser_coords[0]);
-                rhat[i].SetY(station_coords[i][1]-pulser_coords[1]);
-                rhat[i].SetZ(station_depths[i]-vpseudodepths_bigpic[i][j]);
+                rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+                rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+                rhat[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
 
                 rhat_receive[i].SetX(rhat[i][0]);
                 rhat_receive[i].SetY(rhat[i][1]);
@@ -2777,7 +2116,7 @@ int main(int argc, char** argv) {
 
         // Distance-based measured-data graph
         if (i!=5){
-            g1_distances[i]=new TGraphErrors(vtotal_distances[i].size(),&vtotal_distances[i][0],&vsnrmax[i][0],&vtotal_distances_err[i][0],&vsnrmax_err[i][0]);
+            g1_distances[i]=new TGraphErrors(data.vtotal_distances[i].size(),&data.vtotal_distances[i][0],&data.vsnrmax[i][0],&data.vtotal_distances_err[i][0],&data.vsnrmax_err[i][0]);
         }
 
         // Distance-domain model curves
@@ -2799,7 +2138,7 @@ int main(int argc, char** argv) {
     string sbiaxial[NAXIAL]={"isotropic_","uniaxial_",""};
     string sconstant[NCONSTANT]={"","constant_"};
 
-    string sdir="cpol_main_plots_" + sconstant[CONSTANTINDICATRIX] + sbiaxial[BIAXIAL+1] + to_string((int)(freq/1.E6)) + "MHz_angletx" + to_string(CROSSPOLANGLE_TX_INT) + "_anglerx" + to_string(CROSSPOLANGLE_RX_INT) + "/";
+    string sdir="cpol_main_plots_" + sconstant[cfg.CONSTANTINDICATRIX] + sbiaxial[cfg.BIAXIAL+1] + to_string((int)(freq/1.E6)) + "MHz_angletx" + to_string(cfg.CROSSPOLANGLE_TX_INT) + "_anglerx" + to_string(cfg.CROSSPOLANGLE_RX_INT) + "/";
     gSystem->mkdir(sdir.c_str(), /*recursive=*/true);
 
     // Save the first data canvas
@@ -2811,7 +2150,7 @@ int main(int argc, char** argv) {
     TCanvas *c1b=new TCanvas("c1b","c1b",800,800);
     h2[0]->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         g_atten_beam_crosspol_func[istations]->SetLineColor(icolors_dave[istations]);
         g_atten_beam_crosspol_func[istations]->Draw("same");
     }
@@ -2829,10 +2168,10 @@ int main(int argc, char** argv) {
     TH2D *h3[6];
 
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
 
         c3->cd(i+1);
-        h3[i]=new TH2D("h2","h2",3500,1000.,4500,1000,0.,vmax[WHICHPOL][i]);
+        h3[i]=new TH2D(Form("h3_%d", i), Form("h3_%d", i),3500,1000.,4500,1000,0.,vmax[geom.WHICHPOL][i]);
 
         h3[i]->Draw();
 
@@ -2869,8 +2208,8 @@ int main(int argc, char** argv) {
     // Compare observed and expected birefringence delta-n as a function of
     // station angle alpha relative to the ice-flow direction.
     // ------------------------------------------------------------------------
-    TGraphErrors *g_obs=new TGraphErrors(6,alpha_deg,deltan_obs,zeroes,deltan_obs_err);
-    TGraph *g_exp=new TGraph(6,alpha_deg,deltan_exp);
+    TGraphErrors *g_obs=new TGraphErrors(6,geom.alpha_deg,geom.deltan_obs,geom.zeroes,geom.deltan_obs_err);
+    TGraph *g_exp=new TGraph(6,geom.alpha_deg,geom.deltan_exp);
 
     // Analytic expectation for delta n vs alpha in the toy model
     TF1 *fgetDeltaN=new TF1("f1","2*([0]-([0]-[1]/2.)/sqrt(1-[1]/[0]*cos(x*3.14159/180.)*cos(x*3.14159/180.)*(1-[1]/(4.*[0]))))",0.,90.);
@@ -2933,9 +2272,9 @@ int main(int argc, char** argv) {
     legend7b->SetBorderSize();
     legend7b->SetTextSize(0.04);
 
-    for (int i=0;i<NSTATIONS;i++) {
+    for (int i=0;i<geom.NSTATIONS;i++) {
 
-        g_angleS1_k[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vangle_Shat_e1_khat[i][0]);
+        g_angleS1_k[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vangle_Shat_e1_khat[i][0]);
 
         g_angleS1_k[i]->SetMarkerColor(icolors[i]);
         g_angleS1_k[i]->SetLineColor(icolors[i]);
@@ -2944,7 +2283,7 @@ int main(int argc, char** argv) {
 
         g_angleS1_k[i]->Draw("lsame");
 
-        g_angleS2_k[i]=new TGraph(vdepth[i].size(),&vdepth[i][0],&vangle_Shat_e2_khat[i][0]);
+        g_angleS2_k[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vangle_Shat_e2_khat[i][0]);
 
         g_angleS2_k[i]->SetMarkerColor(icolors[i]);
         g_angleS2_k[i]->SetLineColor(icolors[i]);
@@ -2953,7 +2292,7 @@ int main(int argc, char** argv) {
 
         g_angleS2_k[i]->Draw("lsame");
 
-        legend7->AddEntry(g_angleS1_k[i],snames[i].c_str(),"l");
+        legend7->AddEntry(g_angleS1_k[i],geom.snames[i].c_str(),"l");
     }
 
     legend7b->AddEntry(g_angleS1_k[0],"S_{1}","l");
@@ -2985,7 +2324,7 @@ int main(int argc, char** argv) {
     h9->Draw();
 
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_sumphase[istations]->SetMarkerColor(icolors[istations]);
         g_sumphase[istations]->SetLineColor(icolors[istations]);
@@ -2995,7 +2334,7 @@ int main(int argc, char** argv) {
 
         g_sumphase[istations]->Draw("lsame");
 
-        legend26a->AddEntry(g_sumphase[istations],snames[istations].c_str(),"l");
+        legend26a->AddEntry(g_sumphase[istations],geom.snames[istations].c_str(),"l");
 
 
     }
@@ -3014,7 +2353,7 @@ int main(int argc, char** argv) {
     h9a->GetYaxis()->SetTitleOffset(1.45);
 
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c9a->cd(istations+1);
         h9a->Draw();
         g_notflipped[istations]->SetMarkerColor(icolors[istations]);
@@ -3027,12 +2366,12 @@ int main(int argc, char** argv) {
     sname=sdir+"notflipped.pdf";
     c9a->Print(sname.c_str());
 
-    // Total geometric path length for one selected station (currently only minstation)
+    // Total geometric path length for one selected station (currently only geom.minstation)
     TCanvas *c9b=new TCanvas("c9b","c9b",800,800);
     TH2D *h9b=new TH2D("h9b","h9b",100,0.,5000.,100,0.,5000.);
     h9b->Draw();
 
-    for (int istations=minstation;istations<=minstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.minstation;istations++) {
 
         g_sumlength[istations]->SetMarkerColor(icolors[istations]);
         g_sumlength[istations]->SetLineColor(icolors[istations]);
@@ -3046,21 +2385,21 @@ int main(int argc, char** argv) {
     c9b->Print(sname.c_str());
 
     // ------------------------------------------------------------------------
-    // Frequency spectra at one selected pulser depth (depth_special)
+    // Frequency spectra at one selected pulser depth (geom.depth_special)
     // ------------------------------------------------------------------------
     TCanvas *c10=new TCanvas("c10","c10",800,800);
     c10->Divide(2,3);
     TH2D *h10=new TH2D("h10","h10",100,freqmin,freqmax,100,1.,pmax[0][0]);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c10->cd(istations+1);
 
-        g_spectra[istations][(int)g_idepth[istations]->Eval(depth_special)]->SetMarkerColor(icolors[istations]);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(depth_special)]->SetLineColor(icolors[istations]);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(depth_special)]->SetLineStyle(kSolid);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(depth_special)]->SetLineWidth(2);
+        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetMarkerColor(icolors[istations]);
+        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineColor(icolors[istations]);
+        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineStyle(kSolid);
+        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineWidth(2);
 
-        g_spectra[istations][(int)g_idepth[istations]->Eval(depth_special)]->Draw("al");
+        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->Draw("al");
     }
     sname=sdir+"spectra.pdf";
     c10->Print(sname.c_str());
@@ -3072,14 +2411,14 @@ int main(int argc, char** argv) {
     TCanvas *c11=new TCanvas("c11","c11",800,800);
 
     TH2D *h11=new TH2D("h11","h11",100,-1200.,0.,100,1.E-5,1.E-2);
-    string stitle ="Depth along path for pulser depth of " + to_string(depth_special) + "\n";
+    string stitle ="Depth along path for pulser depth of " + to_string(geom.depth_special) + "\n";
     h11->SetXTitle("Depth along path (m)");
     h11->SetYTitle("#Delta n");
 
     h11->Draw();
     gPad->SetLogy();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_deltan_pulserdepth[istations]->SetMarkerColor(icolors[istations]);
         g_deltan_pulserdepth[istations]->SetLineColor(icolors[istations]);
@@ -3098,7 +2437,7 @@ int main(int argc, char** argv) {
 
     gPad->SetLogy();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_attenlengths[istations]->SetMarkerColor(icolors[istations]);
         g_attenlengths[istations]->SetLineColor(icolors[istations]);
@@ -3116,7 +2455,7 @@ int main(int argc, char** argv) {
     TH2D *h11c=new TH2D("h11c","h11c",100,0.,2000.,100,-1.1,1.1);
     h11c->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_notflipped_alongpath[istations]->SetLineColor(icolors[istations]);
         g_notflipped_alongpath[istations]->SetLineStyle(kSolid);
@@ -3134,7 +2473,7 @@ int main(int argc, char** argv) {
     h11d->Draw();
 
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_theta1_alongpath[istations]->SetLineColor(icolors[istations]);
         g_theta1_alongpath[istations]->SetLineStyle(kSolid);
@@ -3157,7 +2496,7 @@ int main(int argc, char** argv) {
     h11e->SetXTitle("Phi (degrees)");
     h11e->SetYTitle("Theta (degrees)");
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_thetape1_alongpath[istations]->SetLineColor(icolors[istations]);
         g_thetape1_alongpath[istations]->SetLineStyle(kSolid);
@@ -3178,7 +2517,7 @@ int main(int argc, char** argv) {
     TH2D *h11f=new TH2D("h11f","h11f",100,-180.,180.,100,0.,180.);
     h11f->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_thetape1_phipe1_alongpath[istations]->SetLineColor(icolors[istations]);
         g_thetape1_phipe1_alongpath[istations]->SetLineStyle(kSolid);
@@ -3204,7 +2543,7 @@ int main(int argc, char** argv) {
 
     gPad->SetLogy();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_idepth[istations]->SetMarkerColor(icolors[istations]);
         g_idepth[istations]->SetLineColor(icolors[istations]);
@@ -3232,7 +2571,7 @@ int main(int argc, char** argv) {
     gPad->SetLogy();
 
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         g_receive_launch[istations]->SetMarkerColor(icolors[istations]);
         g_receive_launch[istations]->SetLineColor(icolors[istations]);
@@ -3253,7 +2592,7 @@ int main(int argc, char** argv) {
     c13->cd(1);
     h13a->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         h13a->SetXTitle("Receive angles (degrees)");
         g_receive[istations]->Draw("lsame");
     }
@@ -3261,7 +2600,7 @@ int main(int argc, char** argv) {
     c13->cd(2);
     h13b->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         h13b->SetXTitle("Launch angles (degrees)");
         g_launch[istations]->Draw("lsame");
     }
@@ -3269,7 +2608,7 @@ int main(int argc, char** argv) {
     c13->cd(3);
     h13c->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         h13c->SetXTitle("Receive angle (degrees)");
         h13c->SetYTitle("Launch angle (degrees)");
 
@@ -3325,7 +2664,7 @@ int main(int argc, char** argv) {
 
 
     // ------------------------------------------------------------------------
-    // Plot raw ray-tracing diagnostic outputs stored in voutput6/7/8.
+    // Plot raw ray-tracing diagnostic outputs stored in data.voutput6/7/8.
     // These come directly from IceRayTracing(...) and help diagnose which
     // solution branches are present or how the solver is behaving.
     // ------------------------------------------------------------------------
@@ -3368,7 +2707,7 @@ int main(int argc, char** argv) {
     c17->cd(1);
     h17->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         g_output6[istations]->SetLineColor(icolors[istations]);
         g_output6[istations]->SetLineWidth(2);
         g_output6[istations]->Draw("lsame");
@@ -3377,7 +2716,7 @@ int main(int argc, char** argv) {
     c17->cd(2);
     h17->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         g_output7[istations]->SetLineColor(icolors[istations]);
         g_output7[istations]->SetLineWidth(2);
         g_output7[istations]->Draw("lsame");
@@ -3386,7 +2725,7 @@ int main(int argc, char** argv) {
     c17->cd(3);
     h17->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         g_output8[istations]->SetLineColor(icolors[istations]);
         g_output8[istations]->SetLineWidth(2);
         g_output8[istations]->Draw("lsame");
@@ -3408,7 +2747,7 @@ int main(int argc, char** argv) {
     TH2D *h18b=new TH2D("h18","h18",100,-1800.,0.,100,-90.,90.);
     c18->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c18->cd(istations+1);
         h18a->Draw();
         gtxdepth_theta1[istations]->SetLineColor(icolors[istations]);
@@ -3420,8 +2759,8 @@ int main(int argc, char** argv) {
         gtxdepthE_theta1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c18->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c18->cd(geom.NSTATIONS+istations+1);
         h18b->Draw();
         gtxdepth_theta2[istations]->SetLineColor(icolors[istations]);
         gtxdepth_theta2[istations]->SetLineWidth(2);
@@ -3442,15 +2781,15 @@ int main(int argc, char** argv) {
     TH2D *h19=new TH2D("h19","h19",100,-1800.,0.,100,-1.,1.);
     c19->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c19->cd(istations+1);
         h19->Draw();
         gtxdepth_dispersion1[istations]->SetLineColor(icolors[istations]);
         gtxdepth_dispersion1[istations]->SetLineWidth(2);
         gtxdepth_dispersion1[istations]->Draw("lsame");
     }
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c19->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c19->cd(geom.NSTATIONS+istations+1);
         h19->Draw();
         gtxdepth_dispersion2[istations]->SetLineColor(icolors[istations]);
         gtxdepth_dispersion2[istations]->SetLineWidth(2);
@@ -3467,7 +2806,7 @@ int main(int argc, char** argv) {
     TH2D *h20b=new TH2D("h20","h20",100,-1800.,0.,100,-90.,90.);
     c20->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c20->cd(istations+1);
         h20a->Draw();
         gtxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
@@ -3479,8 +2818,8 @@ int main(int argc, char** argv) {
         gtxdepthE_theta1_Sclock[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c20->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c20->cd(geom.NSTATIONS+istations+1);
 
         gtxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
         gtxdepth_theta2_Sclock[istations]->SetLineWidth(2);
@@ -3505,7 +2844,7 @@ int main(int argc, char** argv) {
     TH2D *h21b=new TH2D("h21","h21",100,-1800.,0.,100,-1.1,1.1);
     c21->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c21->cd(istations+1);
         h21a->Draw();
         gV1_r1[istations]->SetLineColor(icolors[istations]);
@@ -3513,8 +2852,8 @@ int main(int argc, char** argv) {
         gV1_r1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c21->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c21->cd(geom.NSTATIONS+istations+1);
         h21b->Draw();
         gV1_r2[istations]->SetLineColor(icolors[istations]);
         gV1_r2[istations]->SetLineWidth(2);
@@ -3532,7 +2871,7 @@ int main(int argc, char** argv) {
     TH2D *h22a=new TH2D("h22","h22",100,-1800.,0.,100,0.,100.);
     TH2D *h22b=new TH2D("h22","h22",100,-1800.,0.,100,-1.1,1.1);
     c22->Divide(3,4);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c22->cd(istations+1);
         h22a->Draw();
         gV2_r1[istations]->SetLineColor(icolors[istations]);
@@ -3541,8 +2880,8 @@ int main(int argc, char** argv) {
 
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c22->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c22->cd(geom.NSTATIONS+istations+1);
 
         h22b->Draw();
         gV2_r2[istations]->SetLineColor(icolors[istations]);
@@ -3560,7 +2899,7 @@ int main(int argc, char** argv) {
     TH2D *h23a=new TH2D("h23","h23",100,-1800.,0.,100,0.,1.1);
     TH2D *h23b=new TH2D("h23","h23",100,-1800.,0.,100,0.,1.1);
     c23->Divide(3,4);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c23->cd(istations+1);
         h23a->Draw();
 
@@ -3573,8 +2912,8 @@ int main(int argc, char** argv) {
 
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c23->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c23->cd(geom.NSTATIONS+istations+1);
 
         h23b->Draw();
         genvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
@@ -3613,7 +2952,7 @@ int main(int argc, char** argv) {
     legend24->SetBorderSize(0);
     legend24->SetTextSize(0.04);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gepsilon1_tx[istations]->SetLineColor(icolors[istations]);
         gepsilon1_tx[istations]->SetLineWidth(2);
@@ -3622,8 +2961,8 @@ int main(int argc, char** argv) {
         gepsilon2_tx[istations]->SetLineWidth(2);
         gepsilon2_tx[istations]->SetLineStyle(kDashed);
 
-        gepsilon1_tx[istations]->SetName(snames[istations].c_str());
-        legend24->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        gepsilon1_tx[istations]->SetName(geom.snames[istations].c_str());
+        legend24->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
     }
 
     c24->cd(2);
@@ -3642,7 +2981,7 @@ int main(int argc, char** argv) {
     h26a->Draw();
     legend26->SetBorderSize(0);
     legend26->SetTextSize(0.05);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gepsilon1_rx[istations]->SetLineColor(icolors[istations]);
         gepsilon1_rx[istations]->SetLineWidth(2);
@@ -3652,8 +2991,8 @@ int main(int argc, char** argv) {
         gepsilon2_rx[istations]->SetLineWidth(2);
         gepsilon2_rx[istations]->SetLineStyle(kDashed);
 
-        gepsilon1_rx[istations]->SetName(snames[istations].c_str());
-        legend26->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        gepsilon1_rx[istations]->SetName(geom.snames[istations].c_str());
+        legend26->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
     }
     legend26->Draw("same");
@@ -3695,18 +3034,18 @@ int main(int argc, char** argv) {
     legend26c->SetBorderSize(0);
     legend26c->SetTextSize(0.05);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gdiffepsilon_tx[istations]->SetLineColor(icolors[istations]);
         gdiffepsilon_tx[istations]->SetLineWidth(2);
         gdiffepsilon_tx[istations]->Draw("lsame");
 
-        legend24b->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        legend24b->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
         if (istations<5){
-            legend26b->AddEntry(gdiffepsilon_rx[istations],snames[istations].c_str(),"l");
+            legend26b->AddEntry(gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
         }
         else if (istations==5){
-            legend26c->AddEntry(gdiffepsilon_rx[istations],snames[istations].c_str(),"l");
+            legend26c->AddEntry(gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
         }
     }
 
@@ -3726,7 +3065,7 @@ int main(int argc, char** argv) {
 
     h26b->Draw();
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gdiffepsilon_rx[istations]->SetLineColor(icolors[istations]);
         gdiffepsilon_rx[istations]->SetLineWidth(2);
@@ -3755,21 +3094,21 @@ int main(int argc, char** argv) {
     c27->Divide(1,3);
     c27->cd(1);
     h27a->Draw();
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         gdotShats_tx[istations]->SetLineColor(icolors[istations]);
         gdotShats_tx[istations]->SetLineWidth(2);
         gdotShats_tx[istations]->Draw("lsame");
     }
     c27->cd(2);
     h27b->Draw();
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         gdotEhats_tx[istations]->SetLineColor(icolors[istations]);
         gdotEhats_tx[istations]->SetLineWidth(2);
         gdotEhats_tx[istations]->Draw("lsame");
     }
     c27->cd(3);
     h27c->Draw();
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         gdotDhats_tx[istations]->SetLineColor(icolors[istations]);
         gdotDhats_tx[istations]->SetLineWidth(2);
         gdotDhats_tx[istations]->Draw("lsame");
@@ -3784,7 +3123,7 @@ int main(int argc, char** argv) {
     TCanvas *c28=new TCanvas("c28","c28",800,800);
     TH2D *h28a=new TH2D("h28a","h28a",100,-1800.,0.,100,0.,100000.);
     h28a->Draw();
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         g_depth_istep[istations]->Draw("lsame");
     }
     sname=sdir+"depth_idepth.pdf";
@@ -3800,7 +3139,7 @@ int main(int argc, char** argv) {
     TH2D *h29b=new TH2D("h29","h29",100,-1800.,0.,100,0.,1.);
     c29->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c29->cd(istations+1);
         h29a->Draw();
         gtxdepth_beam1[istations]->SetLineColor(icolors[istations]);
@@ -3808,8 +3147,8 @@ int main(int argc, char** argv) {
         gtxdepth_beam1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c29->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c29->cd(geom.NSTATIONS+istations+1);
         h29b->Draw();
         gtxdepth_beam2[istations]->SetLineColor(icolors[istations]);
         gtxdepth_beam2[istations]->SetLineWidth(2);
@@ -3828,7 +3167,7 @@ int main(int argc, char** argv) {
     TH2D *h30b=new TH2D("h30","h30",100,-1800.,0.,100,0.,1.);
     c30->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c30->cd(istations+1);
         h30a->Draw();
         grxdepth_beam1[istations]->SetLineColor(icolors[istations]);
@@ -3836,8 +3175,8 @@ int main(int argc, char** argv) {
         grxdepth_beam1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c30->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c30->cd(geom.NSTATIONS+istations+1);
         h30b->Draw();
         grxdepth_beam2[istations]->SetLineColor(icolors[istations]);
         grxdepth_beam2[istations]->SetLineWidth(2);
@@ -3853,7 +3192,7 @@ int main(int argc, char** argv) {
     TH2D *h31=new TH2D("h31","h31",100,-1800.,0.,100,1.E-5,1.);
     c31->SetLogy();
     h31->Draw();
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         grxdepth_atten[istations]->SetLineColor(kGray);
         grxdepth_atten[istations]->SetLineWidth(2);
         grxdepth_atten[istations]->Draw("lsame");
@@ -3877,7 +3216,7 @@ int main(int argc, char** argv) {
     TH2D *h32b=new TH2D("h32","h32",100,-1800.,0.,100,-5.,5.);
     c32->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c32->cd(istations+1);
         h32a->Draw();
         grxdepth_theta1[istations]->SetLineColor(icolors[istations]);
@@ -3889,8 +3228,8 @@ int main(int argc, char** argv) {
         grxdepthE_theta1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c32->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c32->cd(geom.NSTATIONS+istations+1);
         h32b->Draw();
         grxdepth_theta2[istations]->SetLineColor(icolors[istations]);
         grxdepth_theta2[istations]->SetLineWidth(2);
@@ -3912,7 +3251,7 @@ int main(int argc, char** argv) {
     TH2D *h33b=new TH2D("h33","h33",100,-1800.,0.,100,-90.,90.);
     c33->Divide(3,4);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c33->cd(istations+1);
         h33a->Draw();
         grxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
@@ -3924,8 +3263,8 @@ int main(int argc, char** argv) {
         grxdepthE_theta1_Sclock[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c33->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c33->cd(geom.NSTATIONS+istations+1);
 
         grxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
         grxdepth_theta2_Sclock[istations]->SetLineWidth(2);
@@ -3947,10 +3286,10 @@ int main(int argc, char** argv) {
     // Bottom panels : r^2 P_phi-like quantity   (r2)
     // ------------------------------------------------------------------------
     TCanvas *c34=new TCanvas("c34","c34",800,800);
-    TH2D *h34a[NSTATIONS];
-    TH2D *h34b[NSTATIONS];
+    TH2D *h34a[geom.NSTATIONS];
+    TH2D *h34b[geom.NSTATIONS];
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
         h34a[i]=new TH2D("h34a","h34a",200,-1800.,0.,100,0.,pmax[0][i]);
         h34a[i]->SetXTitle("SpiceCore pulser height (m)");
         h34a[i]->SetYTitle("r^{2} P_{#theta} (arb. units)");
@@ -3960,7 +3299,7 @@ int main(int argc, char** argv) {
     }
 
     c34->Divide(3,4);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c34->cd(istations+1);
         h34a[istations]->Draw();
         gpower_r1[istations]->SetLineColor(icolors[istations]);
@@ -3968,8 +3307,8 @@ int main(int argc, char** argv) {
         gpower_r1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c34->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c34->cd(geom.NSTATIONS+istations+1);
         h34b[istations]->Draw();
         gpower_r2[istations]->SetLineColor(icolors[istations]);
         gpower_r2[istations]->SetLineWidth(2);
@@ -3983,10 +3322,10 @@ int main(int argc, char** argv) {
     // These are amplitude-like versions of the envelope quantities.
     // ------------------------------------------------------------------------
     TCanvas *c35=new TCanvas("c35","c35",800,800);
-    TH2D *h35a[NSTATIONS];
-    TH2D *h35b[NSTATIONS];
+    TH2D *h35a[geom.NSTATIONS];
+    TH2D *h35b[geom.NSTATIONS];
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
         h35a[i]=new TH2D("h35a","h35a",200,-1500.,-850,100,0.,vmax[0][i]);
         h35a[i]->SetXTitle("SpiceCore pulser height (m)");
         h35a[i]->SetYTitle("r^{2} P_{#theta} (arb. units)");
@@ -3996,7 +3335,7 @@ int main(int argc, char** argv) {
     }
 
     c35->Divide(3,4);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c35->cd(istations+1);
         h35a[istations]->Draw();
 
@@ -4008,8 +3347,8 @@ int main(int argc, char** argv) {
         gvenvelope_minus_r1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c35->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c35->cd(geom.NSTATIONS+istations+1);
 
         h35b[istations]->Draw();
         gvenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
@@ -4028,10 +3367,10 @@ int main(int argc, char** argv) {
     // Bottom panels : r2/phi-like channel
     // ------------------------------------------------------------------------
     TCanvas *c36=new TCanvas("c36","c36",800,800);
-    TH2D *h36a[NSTATIONS];
-    TH2D *h36b[NSTATIONS];
+    TH2D *h36a[geom.NSTATIONS];
+    TH2D *h36b[geom.NSTATIONS];
 
-    for (int i=minstation;i<=maxstation;i++) {
+    for (int i=geom.minstation;i<=geom.maxstation;i++) {
         h36a[i]=new TH2D("","",200,-1600.,-600.,100,0.,vmax[0][i]);
         h36a[i]->SetXTitle("Pulser height (m)");
         h36a[i]->SetYTitle("Voltage @ 300 MHz (arb. units)");
@@ -4047,7 +3386,7 @@ int main(int argc, char** argv) {
     }
 
     c36->Divide(3,4);
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c36->cd(istations+1);
         h36a[istations]->Draw();
         grxdepth_atten[istations]->Draw("lsame");
@@ -4060,8 +3399,8 @@ int main(int argc, char** argv) {
         gvoltage_r1[istations]->Draw("lsame");
     }
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
-        c36->cd(NSTATIONS+istations+1);
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+        c36->cd(geom.NSTATIONS+istations+1);
         h36b[istations]->Draw();
         grxdepth_atten[istations]->Draw("lsame");
         grxdepth_atten_beam[istations]->Draw("lsame");
@@ -4128,7 +3467,7 @@ int main(int argc, char** argv) {
 
     h37->GetXaxis()->SetNdivisions(504);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gvenvelope_plus_r2[istations]->SetLineStyle(kSolid);
         gvenvelope_minus_r2[istations]->SetLineStyle(kSolid);
@@ -4141,8 +3480,8 @@ int main(int argc, char** argv) {
             gvoltage_r2[istations]->Draw("lsame");
         }
 
-        gvoltage_r2[istations]->SetName(snames[istations].c_str());
-        legend37->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        gvoltage_r2[istations]->SetName(geom.snames[istations].c_str());
+        legend37->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
         if (istations==0) {
             legend38b->AddEntry(gvenvelope_plus_r2[istations],"Voltage envelope","l");
@@ -4183,10 +3522,10 @@ int main(int argc, char** argv) {
     A2->SetLabelFont(42);
     A2->SetTitleSize(0.05);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gvenvelope_plus_r1[istations]->SetLineStyle(kSolid);
-        gvenvelope_plus_r1[istations]->SetName(snames[istations].c_str());
+        gvenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
 
         gvenvelope_minus_r1[istations]->SetLineStyle(kSolid);
         gvoltage_r1[istations]->SetLineStyle(kDashed);
@@ -4201,7 +3540,7 @@ int main(int argc, char** argv) {
             gvenvelope_plus_r1[istations]->Draw("lsame");
         }
 
-        legend38->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        legend38->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
     }
 
     legend38->Draw("same");
@@ -4240,7 +3579,7 @@ int main(int argc, char** argv) {
 
     h37b->GetXaxis()->SetNdivisions(504);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gEenvelope_plus_r2[istations]->SetLineStyle(kSolid);
         gEenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
@@ -4258,8 +3597,8 @@ int main(int argc, char** argv) {
         gfield_r2[istations]->SetLineColor(icolors[istations]);
         gfield_r2[istations]->SetLineWidth(2);
         gfield_r2[istations]->Draw("lsame");
-        gfield_r2[istations]->SetName(snames[istations].c_str());
-        legend37b->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        gfield_r2[istations]->SetName(geom.snames[istations].c_str());
+        legend37b->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
         if (istations==0) {
             legend38c->AddEntry(gEenvelope_plus_r2[istations],"E field envelope","l");
@@ -4298,12 +3637,12 @@ int main(int argc, char** argv) {
     A2b->SetLabelFont(42);
     A2b->SetTitleSize(0.05);
 
-    for (int istations=minstation;istations<=maxstation;istations++) {
+    for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
         gEenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
         gEenvelope_plus_r1[istations]->SetLineWidth(2);
         gEenvelope_plus_r1[istations]->SetLineStyle(kSolid);
-        gEenvelope_plus_r1[istations]->SetName(snames[istations].c_str());
+        gEenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
         gEenvelope_plus_r1[istations]->Draw("lsame");
 
         gEenvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
@@ -4320,7 +3659,7 @@ int main(int argc, char** argv) {
         }
         gfield_r1[istations]->Draw("lsame");
 
-        legend38d->AddEntry(snames[istations].c_str(),snames[istations].c_str(),"l");
+        legend38d->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
     }
 
     legend38d->Draw("same");
@@ -4340,7 +3679,7 @@ int main(int argc, char** argv) {
 
     c40->Divide(3,4);
 
-    for (int istations=0;istations<NSTATIONS;istations++) {
+    for (int istations=0;istations<geom.NSTATIONS;istations++) {
         c40->cd(istations+1);
         h40a->Draw();
 
@@ -4349,8 +3688,8 @@ int main(int argc, char** argv) {
         gpolarization_Omega_rx[istations]->Draw("lsame");
 
     }
-    for (int istations=0;istations<NSTATIONS;istations++) {
-        c40->cd(NSTATIONS+istations+1);
+    for (int istations=0;istations<geom.NSTATIONS;istations++) {
+        c40->cd(geom.NSTATIONS+istations+1);
         h40b->Draw();
         gpolarization_Psi_rx[istations]->SetLineColor(icolors[istations]);
         gpolarization_Psi_rx[istations]->SetLineStyle(kSolid);
@@ -4389,7 +3728,7 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     char name[100];
 
-    string sfilenames=sdir+"myoutputs_tx" + to_string(CROSSPOLANGLE_TX_INT) + "_rx" + to_string(CROSSPOLANGLE_RX_INT) + ".root";
+    string sfilenames=sdir+"myoutputs_tx" + to_string(cfg.CROSSPOLANGLE_TX_INT) + "_rx" + to_string(cfg.CROSSPOLANGLE_RX_INT) + ".root";
 
     TFile *fout=new TFile(sfilenames.c_str(),"RECREATE");
 
@@ -4407,7 +3746,7 @@ int main(int argc, char** argv) {
     // Each object name is tagged by station index so the file can be reused
     // later without ambiguity.
     // ------------------------------------------------------------------------
-    for (int istations=0;istations<NSTATIONS;istations++) {
+    for (int istations=0;istations<geom.NSTATIONS;istations++) {
 
         // Receiver polarization angle Psi vs reversed depth
         sprintf(name,"gpolarization_reversedepth_Psi_rx_%d",istations);
@@ -4436,9 +3775,9 @@ int main(int argc, char** argv) {
         gvenvelope_plus_r1[istations]->Write(name);
 
         // Store spectra for a fixed list of "special" pulser depths
-        for (int ispecial=0;ispecial<NSPECIAL;ispecial++) {
+        for (int ispecial=0;ispecial<geom.NSPECIAL;ispecial++) {
             sprintf(name,"g_spectra_%d_%d",istations,ispecial);
-            g_spectra[istations][(int)g_idepth[istations]->Eval(whichspecial[ispecial])]->Write(name);
+            g_spectra[istations][(int)g_idepth[istations]->Eval(geom.whichspecial[ispecial])]->Write(name);
         }
 
         // Constructive voltage envelope in channel r2
@@ -4489,13 +3828,17 @@ int main(int argc, char** argv) {
 
         // Debug printout of channel-r2 interference terms at a reference depth
         int idepth_temp=g_idepth[istations]->Eval(-1000.);
-        cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << istations << "\t" << vV1squared_r2[istations][idepth_temp] << "\t" << vV2squared_r2[istations][idepth_temp] << "\t" << vV1V2_r2[istations][idepth_temp] << "\n";
+        cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << istations << "\t" << data.vV1squared_r2[istations][idepth_temp] << "\t" << data.vV2squared_r2[istations][idepth_temp] << "\t" << data.vV1V2_r2[istations][idepth_temp] << "\n";
 
     }
 
     // Close the output ROOT file
     fout->Close();
 
+    // Get the elapsed time
+    auto since_epoch = start.time_since_epoch();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(since_epoch).count();
+    std::cout << "Seconds since start: " << seconds << std::endl;
     return (0);
 }
 
