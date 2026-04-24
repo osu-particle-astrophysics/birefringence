@@ -159,6 +159,33 @@ struct StationData {
     std::vector<std::vector<double>> vepsilon2_rx;
     std::vector<std::vector<double>> vdiffepsilon_rx;
 
+    // ------------------------------------------------------------------------
+    // Geometric / polarization bookkeeping vectors used later during ray tracing
+    // and field decomposition.
+    //
+    // A brief interpretation of some names:
+    //   rhat         = launch-direction unit vector
+    //   rhat_receive = receive-direction unit vector
+    //   p_o, p_e     = ordinary / extraordinary polarization directions
+    //   Pt, Pr1, Pr2 = transmitter / receiver basis vectors
+    // ------------------------------------------------------------------------
+    vector <TVector3> rhat;
+    vector <TVector3> rhat_launch;
+    vector <TVector3> rhat_receive;
+    vector <TVector3> p_o;
+    vector <TVector3> p_e;
+    vector <TVector3> p_e_rx;
+    vector <TVector3> p_o_rx;
+    vector <TVector3> acrossp_o;
+    vector <TVector3> acrossp_e;
+    vector <TVector3> extraordinary;
+    vector <TVector3> Pt;
+    vector <TVector3> Pt_extraordinary;
+    vector <TVector3> Pt_ordinary;
+    vector <TVector3> Pr1;
+
+    vector <TVector3> Pr2;
+
     void resize_station_vectors(std::size_t nstations = 6) {
         vdotShats_tx.resize(nstations);
         vdotEhats_tx.resize(nstations);
@@ -297,5 +324,129 @@ struct StationData {
         for (std::size_t istation = 0; istation < nstations; istation++) {
             vraypos[istation].resize(3);
         }
+        // One entry per station
+        rhat.resize(6);
+        rhat_launch.resize(6);
+        rhat_receive.resize(6);
+        extraordinary.resize(6);
+        p_o.resize(6);
+        p_e.resize(6);
+        p_o_rx.resize(6);
+        p_e_rx.resize(6);
+        acrossp_o.resize(6);
+        acrossp_e.resize(6);
+        Pt.resize(6);
+        Pt_extraordinary.resize(6);
+        Pt_ordinary.resize(6);
+        Pr1.resize(6);
+
+        Pr2.resize(6);
+
     }
+
+    // ------------------------------------------------------------------------
+    // Declare lots of ROOT TGraphs that will be filled later 
+    // ------------------------------------------------------------------------
+    TGraph *graypath_z_x[6];
+    TGraph *graypath_z_y[6];
+    TGraph *graypath_y_x[6];
+
+    TGraph *graypath_n[6];
+
+    TGraph *grxdepth_atten[6];
+    TGraph *grxdepth_atten_beam[6];
+    TGraph *grxdepth_atten_power[6];
+    TGraph *grxdepth_atten_beam_power[6];
+    TGraph *grxdepth_beam1[6];
+    TGraph *grxdepth_beam2[6];
+    TGraph *gtxdepth_beam1[6];
+    TGraph *gtxdepth_beam2[6];
+    TGraph *gtxdepth_theta1[6];
+    TGraph *gtxdepth_theta2[6];
+    TGraph *grxdepth_theta1[6];
+    TGraph *grxdepth_theta2[6];
+    TGraph *grxdepthE_theta1[6];
+    TGraph *grxdepthE_theta2[6];
+    TGraph *gtxdepth_theta1_Sclock[6];
+    TGraph *gtxdepth_theta2_Sclock[6];
+    TGraph *grxdepth_theta1_Sclock[6];
+    TGraph *grxdepth_theta2_Sclock[6];
+    TGraph *gtxdepth_dispersion1[6];
+    TGraph *gtxdepth_dispersion2[6];
+    TGraph *gtxdepthE_theta1[6];
+    TGraph *gtxdepthE_theta2[6];
+    TGraph *gtxdepthE_theta1_Sclock[6];
+    TGraph *gtxdepthE_theta2_Sclock[6];
+    TGraph *grxdepthE_theta1_Sclock[6];
+    TGraph *grxdepthE_theta2_Sclock[6];
+
+    TGraph *gdotShats_tx[6];
+    TGraph *gdotEhats_tx[6];
+    TGraph *gdotDhats_tx[6];
+
+    TGraph *gsnrmax[6];
+    TGraph *g_idepth[6];
+
+    // Waveform-related graphs (per station)
+    TGraph *gV1_r1[6];
+    TGraph *gV2_r1[6];
+    TGraph *gV1squared_r1[6];
+    TGraph *gV2squared_r1[6];
+    TGraph *gV1V2_r1[6];
+    TGraph *gV1V2_r2[6];
+    TGraph *goppositeV1V2_r1[6];
+    TGraph *goppositeV1V2_r2[6];
+    TGraph *gpower_r1[6];
+    TGraph *gpower_r2[6];
+    TGraph *gvoltage_r1[6];
+    TGraph *gvoltage_r2[6];
+    TGraph *gfield_r1[6];
+    TGraph *gfield_r2[6];
+    TGraph *genvelope_minus_r1[6];
+    TGraph *genvelope_minus_r2[6];
+    TGraph *genvelope_plus_r1[6];
+    TGraph *genvelope_plus_r2[6];
+    TGraph *gvenvelope_minus_r1[6];
+    TGraph *gvenvelope_minus_r2[6];
+    TGraph *gvenvelope_plus_r1[6];
+    TGraph *gvenvelope_plus_r2[6];
+    TGraph *gEenvelope_minus_r1[6];
+    TGraph *gEenvelope_minus_r2[6];
+    TGraph *gEenvelope_plus_r1[6];
+    TGraph *gEenvelope_plus_r2[6];
+
+    TGraph *gV1_r2[6];
+    TGraph *gV2_r2[6];
+    TGraph *gV1squared_r2[6];
+    TGraph *gV2squared_r2[6];
+
+    // Dielectric eigenvalues at TX/RX (per station)
+    TGraph *gepsilon1_tx[6];
+    TGraph *gepsilon2_tx[6];
+    TGraph *gdiffepsilon_tx[6];
+
+    TGraph *gepsilon1_rx[6];
+    TGraph *gepsilon2_rx[6];
+    TGraph *gdiffepsilon_rx[6];
+
+    // Polarization angles (per station)
+    TGraph *gpolarization_Omega_rx[6];
+    TGraph *gpolarization_Psi_rx[6];
+    TGraph *gEpolarization_Omega_rx[6];
+    TGraph *gEpolarization_Psi_rx[6];
+
+    TGraph *gpolarization_reversedepth_Omega_rx[6];
+    TGraph *gpolarization_reversedepth_Psi_rx[6];
+
+    TGraph *gEpolarization_reversedepth_Omega_rx[6];
+    TGraph *gEpolarization_reversedepth_Psi_rx[6];
+
+    // Misc outputs from ray tracer / solver
+    TGraph *g_receive_launch[6];
+    TGraph *g_receive[6];
+    TGraph *g_launch[6];
+    TGraph *g_output6[6];
+    TGraph *g_output7[6];
+    TGraph *g_output8[6];
+
 };

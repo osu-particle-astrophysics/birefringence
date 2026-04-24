@@ -41,6 +41,7 @@ This code describes the effects of birefringence at the South Pole
 #include "geometry.hh"
 #include "station_data.hh"
 #include "ice_profile.hh"
+#include "antenna_measurements.hh"
 
 
 using namespace std;
@@ -82,7 +83,7 @@ TVector3 rotateE(TVector3 epsilon, double angle_iceflow, TVector3 E);
 // ----------------------------------------------------------------------------
 int main(int argc, char** argv) {
   // Read the terminal inputs
-  Config cfg(argc, argv);   // Get start time
+  Config cfg(argc, argv);   // Get the run details
   Geometry geom;            // Set up the geometry of stations and pulsers
 
 	using clock = std::chrono::system_clock;
@@ -110,270 +111,12 @@ int main(int argc, char** argv) {
     // Get the station geometry using these nvecs
     geom.compute_station_geometry(cfg.BIAXIAL, nvec);
     // Initialize lots of vectors for data
-    StationData data;
-    data.resize_station_vectors(geom.NSTATIONS);
-
-    // ------------------------------------------------------------------------
-    // Input data files (Dave logs + n1/n2/n3 refractive index profiles)
-    // ------------------------------------------------------------------------
-    string sfile;
-    if (geom.WHICHPOL==0)
-    sfile="dave_data/day359_pol0.log";
-    if (geom.WHICHPOL==1)
-    sfile="dave_data/day359_pol1.log";
-
-
-    ifstream myfile(sfile.c_str());
-    ifstream davea5file("dave_data/a5_amyformat.txt");
-
+    StationData model_data;
+    model_data.resize_station_vectors(geom.NSTATIONS);
     // Read in the index of refraction data and smooth it
     Ice_Profile ice(cfg, nvec);
-
-
-    // ------------------------------------------------------------------------
-    // Build ROOT graphs of n1(z), n2(z), n3(z) for interpolation via Eval(z)
-    // ------------------------------------------------------------------------
-    TGraph *gn1=new TGraph(ice.n1vec.size(),&ice.vdepths_n1[0],&ice.n1vec[0]);
-    TGraph *gn2=new TGraph(ice.n2vec.size(),&ice.vdepths_n2[0],&ice.n2vec[0]);
-    TGraph *gn3=new TGraph(ice.n3vec.size(),&ice.vdepths_n3[0],&ice.n3vec[0]);
-    TGraph *g_V;
-
-    // Compute derived quantity V(z) from the birefringence model (getV in birefringence.hh)
-    vector<double> nvec_tmp;
-    nvec_tmp.resize(3);
-
-    for (int i=0;i<ice.n1vec.size();i++) {
-        // Evaluate indices at each depth (using the smoothed/interpolated curves)
-        nvec_tmp[0]=gn1->Eval(ice.vdepths_n1[i]);
-        nvec_tmp[1]=gn2->Eval(ice.vdepths_n2[i]);
-        nvec_tmp[2]=gn3->Eval(ice.vdepths_n3[i]);
-        ice.vV.push_back(getV(nvec_tmp));
-    }
-
-    // Graph of V(z)
-    g_V=new TGraph(ice.vdepths_n1.size(),&ice.vdepths_n1[0],&ice.vV[0]);
-
-    // ------------------------------------------------------------------------
-    // Declare lots of ROOT TGraphs that will be filled later 
-    // ------------------------------------------------------------------------
-    TGraph *graypath_z_x[6];
-    TGraph *graypath_z_y[6];
-    TGraph *graypath_y_x[6];
-
-    TGraph *graypath_n[6];
-
-    TGraph *grxdepth_atten[6];
-    TGraph *grxdepth_atten_beam[6];
-    TGraph *grxdepth_atten_power[6];
-    TGraph *grxdepth_atten_beam_power[6];
-    TGraph *grxdepth_beam1[6];
-    TGraph *grxdepth_beam2[6];
-    TGraph *gtxdepth_beam1[6];
-    TGraph *gtxdepth_beam2[6];
-    TGraph *gtxdepth_theta1[6];
-    TGraph *gtxdepth_theta2[6];
-    TGraph *grxdepth_theta1[6];
-    TGraph *grxdepth_theta2[6];
-    TGraph *grxdepthE_theta1[6];
-    TGraph *grxdepthE_theta2[6];
-    TGraph *gtxdepth_theta1_Sclock[6];
-    TGraph *gtxdepth_theta2_Sclock[6];
-    TGraph *grxdepth_theta1_Sclock[6];
-    TGraph *grxdepth_theta2_Sclock[6];
-    TGraph *gtxdepth_dispersion1[6];
-    TGraph *gtxdepth_dispersion2[6];
-    TGraph *gtxdepthE_theta1[6];
-    TGraph *gtxdepthE_theta2[6];
-    TGraph *gtxdepthE_theta1_Sclock[6];
-    TGraph *gtxdepthE_theta2_Sclock[6];
-    TGraph *grxdepthE_theta1_Sclock[6];
-    TGraph *grxdepthE_theta2_Sclock[6];
-
-    TGraph *gdotShats_tx[6];
-    TGraph *gdotEhats_tx[6];
-    TGraph *gdotDhats_tx[6];
-
-    TGraph *gsnrmax[6];
-    TGraph *g_idepth[6];
-
-    // Waveform-related graphs (per station)
-    TGraph *gV1_r1[6];
-    TGraph *gV2_r1[6];
-    TGraph *gV1squared_r1[6];
-    TGraph *gV2squared_r1[6];
-    TGraph *gV1V2_r1[6];
-    TGraph *gV1V2_r2[6];
-    TGraph *goppositeV1V2_r1[6];
-    TGraph *goppositeV1V2_r2[6];
-    TGraph *gpower_r1[6];
-    TGraph *gpower_r2[6];
-    TGraph *gvoltage_r1[6];
-    TGraph *gvoltage_r2[6];
-    TGraph *gfield_r1[6];
-    TGraph *gfield_r2[6];
-    TGraph *genvelope_minus_r1[6];
-    TGraph *genvelope_minus_r2[6];
-    TGraph *genvelope_plus_r1[6];
-    TGraph *genvelope_plus_r2[6];
-    TGraph *gvenvelope_minus_r1[6];
-    TGraph *gvenvelope_minus_r2[6];
-    TGraph *gvenvelope_plus_r1[6];
-    TGraph *gvenvelope_plus_r2[6];
-    TGraph *gEenvelope_minus_r1[6];
-    TGraph *gEenvelope_minus_r2[6];
-    TGraph *gEenvelope_plus_r1[6];
-    TGraph *gEenvelope_plus_r2[6];
-
-    TGraph *gV1_r2[6];
-    TGraph *gV2_r2[6];
-    TGraph *gV1squared_r2[6];
-    TGraph *gV2squared_r2[6];
-
-    // Dielectric eigenvalues at TX/RX (per station)
-    TGraph *gepsilon1_tx[6];
-    TGraph *gepsilon2_tx[6];
-    TGraph *gdiffepsilon_tx[6];
-
-    TGraph *gepsilon1_rx[6];
-    TGraph *gepsilon2_rx[6];
-    TGraph *gdiffepsilon_rx[6];
-
-    // Polarization angles (per station)
-    TGraph *gpolarization_Omega_rx[6];
-    TGraph *gpolarization_Psi_rx[6];
-    TGraph *gEpolarization_Omega_rx[6];
-    TGraph *gEpolarization_Psi_rx[6];
-
-    TGraph *gpolarization_reversedepth_Omega_rx[6];
-    TGraph *gpolarization_reversedepth_Psi_rx[6];
-
-    TGraph *gEpolarization_reversedepth_Omega_rx[6];
-    TGraph *gEpolarization_reversedepth_Psi_rx[6];
-
-    // Misc outputs from ray tracer / solver
-    TGraph *g_receive_launch[6];
-    TGraph *g_receive[6];
-    TGraph *g_launch[6];
-    TGraph *g_output6[6];
-    TGraph *g_output7[6];
-    TGraph *g_output8[6];
-
-    // ------------------------------------------------------------------------
-    // Read Dave's data: parse station/day/pol/depth/snr
-    // Store depth, snr, distance, and estimate an error from last-3-point RMS.
-    // ------------------------------------------------------------------------
-    int NSHOTS=640;
-
-    double running_rms=0.;
-    double running_mean=0.;
-
-
-    if (myfile.is_open())
-    {
-        for (int i=0;i<NSHOTS;i++) {
-
-            int this_station, this_day, this_pol;
-            double this_depth, this_snrmax;
-
-            // Format: station day pol depth snr
-            myfile >> this_station >> this_day >> this_pol >> this_depth >> this_snrmax;
-
-            // Rescale SNR to a common reference distance (A1 at -1000 m) for comparisons
-            this_snrmax=this_snrmax*sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1])/sqrt((-1000.-geom.station_depths[0])*(-1000.-geom.station_depths[0])+geom.horizontal_distances[0]*geom.horizontal_distances[0]);
-
-            // Keep positive SNR, and exclude A5 pol0 special case
-            if (this_snrmax>0. && !(this_station==5 && this_pol==0)) {
-                
-                // Store depth and SNR for that station
-                data.vdepth_data[this_station-1].push_back(this_depth);
-                data.vsnrmax[this_station-1].push_back(this_snrmax);
-
-                // Store total geometric distance (straight-line) from pulser to receiver
-                data.vtotal_distances[this_station-1].push_back(sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1]));
-
-                // Estimate an uncertainty using RMS of last 3 SNR points (when available)
-                if (i>2) {
-                    running_mean=0.;
-                    running_rms=0.;
-                    for (int j=0;j<3;j++) {
-                        running_mean+=data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1];
-                    }
-                    running_mean=running_mean/3.;
-
-                    for (int j=0;j<3;j++) {
-                        running_rms+=(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean)*(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean);
-                    }
-                    running_rms=sqrt(running_rms/2.);
-                }
-
-                // Store errors (depth/distance errors set to 0 here)
-                data.vsnrmax_err[this_station-1].push_back(running_rms);
-                data.vdepth_data_err[this_station-1].push_back(0.);
-                data.vtotal_distances_err[this_station-1].push_back(0.);
-            }
-        }
-
-        myfile.close();
-    }
-
-    // ------------------------------------------------------------------------
-    // Special handling for A5: for WHICHPOL==0, read a separate file in Amy format.
-    // ------------------------------------------------------------------------
-    NSHOTS=33;
-
-    if (geom.WHICHPOL==0) {
-        if (davea5file.is_open())
-        {
-            cout << "i'm reading dave's a5 file.\n";
-            for (int i=0;i<NSHOTS;i++) {
-
-                int this_station, this_day, this_pol;
-                double this_depth, this_snrmax;
-                string stemp;
-                int this_channel;
-                this_station=5;
-
-                // Format: <token> <channel> <depth> <snr>
-                davea5file >> stemp >> this_channel >> this_depth >> this_snrmax;
-
-                // Keep only positive-SNR entries
-                if (this_snrmax>0.) {
-                    data.vdepth_data[this_station-1].push_back(this_depth);
-
-                    // Store measured SNR and corresponding straight-line pulser->station distance
-                    data.vsnrmax[this_station-1].push_back(this_snrmax);
-                    data.vtotal_distances[this_station-1].push_back(sqrt((this_depth-geom.station_depths[this_station-1])*(this_depth-geom.station_depths[this_station-1])+geom.horizontal_distances[this_station-1]*geom.horizontal_distances[this_station-1]));
-
-                    // Same running RMS estimate as above:
-                    // use the last 3 stored SNR values to estimate a local scatter / uncertainty
-                    if (i>2) {
-                        running_mean=0.;
-                        running_rms=0.;
-                        for (int j=0;j<3;j++) {
-                            running_mean+=data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1];
-                        }
-                        running_mean=running_mean/3.;
-
-                        for (int j=0;j<3;j++) {
-                            running_rms+=(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean)*(data.vsnrmax[this_station-1][data.vsnrmax[this_station-1].size()-j-1]-running_mean);
-                        }
-                        // Divide by 2 since this is an RMS estimate over 3 points (N-1 denominator)
-                        running_rms=sqrt(running_rms/2.);
-
-                    }
-                    // Store per-point uncertainties
-                    data.vsnrmax_err[this_station-1].push_back(running_rms);
-
-                    // Depth and distance uncertainties are taken as zero here
-                    data.vdepth_data_err[this_station-1].push_back(0.);
-                    data.vtotal_distances_err[this_station-1].push_back(0.);
-                }
-            }
-
-            davea5file.close();
-
-        }
-    }
+    // Read in the actual data measured in A1-A5
+    load_antenna_measurements(cfg, geom, model_data);
 
     // ------------------------------------------------------------------------
     // Build the pulser-depth scan used in the model.
@@ -382,38 +125,38 @@ int main(int argc, char** argv) {
     //   step downward by 10 m
     //   take 200 depth values
     //
-    // data.vdepth[station] stores the pulser depths,
-    // data.videpth[station] stores the corresponding integer-like indices.
+    // model_data.vdepth[station] stores the pulser depths,
+    // model_data.videpth[station] stores the corresponding integer-like indices.
     // ------------------------------------------------------------------------
     double arianna_minpulserdepth=-400.;
     double arianna_pulserstep=10.;
     int NARIANNA_PULSER=200;
     for (int istations=0;istations<geom.NSTATIONS;istations++) {
         for (int i=0;i<NARIANNA_PULSER;i++) {
-            data.vdepth[istations].push_back(arianna_minpulserdepth-(double)arianna_pulserstep*(double)i);
-            data.videpth[istations].push_back((double)i);
+            model_data.vdepth[istations].push_back(arianna_minpulserdepth-(double)arianna_pulserstep*(double)i);
+            model_data.videpth[istations].push_back((double)i);
         }
     }
 
     // Build a reversed-depth version, useful for plots where increasing pulser depth
     // (positive number) is more natural than negative height.
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        for (int j=0;j<data.vdepth[istations].size();j++) {
-            data.vreversedepth[istations].push_back(-1.*data.vdepth[istations][data.vdepth[istations].size()-1-j]);
+        for (int j=0;j<model_data.vdepth[istations].size();j++) {
+            model_data.vreversedepth[istations].push_back(-1.*model_data.vdepth[istations][model_data.vdepth[istations].size()-1-j]);
         }
     }
 
     // ------------------------------------------------------------------------
     // ROOT graphs:
-    //   gsnrmax[i] = measured SNR vs pulser depth for station i
-    //   g_idepth[i] = mapping from physical depth -> index in the depth scan
+    //   model_data.gsnrmax[i] = measured SNR vs pulser depth for station i
+    //   model_data.g_idepth[i] = mapping from physical depth -> index in the depth scan
     //
-    // Note: station index 5 (ARIANNA) has no gsnrmax built here.
+    // Note: station index 5 (ARIANNA) has no model_data.gsnrmax built here.
     // ------------------------------------------------------------------------
     for (int i=geom.minstation;i<=geom.maxstation;i++) {
         if (i!=5)
-        gsnrmax[i]=new TGraph(data.vsnrmax[i].size(),&data.vdepth_data[i][0],&data.vsnrmax[i][0]);
-        g_idepth[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.videpth[i][0]);
+        model_data.gsnrmax[i]=new TGraph(model_data.vsnrmax[i].size(),&model_data.vdepth_data[i][0],&model_data.vsnrmax[i][0]);
+        model_data.g_idepth[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.videpth[i][0]);
 
 
     }
@@ -426,94 +169,18 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         geom.igreatestdepth[istations]=0;
         geom.imostshallowdepth[istations]=0;
-        for (int idepth=0;idepth<data.vdepth[istations].size();idepth++) {
-            if (data.vdepth[istations][idepth]<data.vdepth[istations][geom.igreatestdepth[istations]])
+        for (int idepth=0;idepth<model_data.vdepth[istations].size();idepth++) {
+            if (model_data.vdepth[istations][idepth]<model_data.vdepth[istations][geom.igreatestdepth[istations]])
             geom.igreatestdepth[istations]=idepth;
-            if (data.vdepth[istations][idepth]>data.vdepth[istations][geom.imostshallowdepth[istations]])
+            if (model_data.vdepth[istations][idepth]>model_data.vdepth[istations][geom.imostshallowdepth[istations]])
             geom.imostshallowdepth[istations]=idepth;
         }
 
     }
 
     // ------------------------------------------------------------------------
-    // Geometric / polarization bookkeeping vectors used later during ray tracing
-    // and field decomposition.
-    //
-    // A brief interpretation of some names:
-    //   rhat         = launch-direction unit vector
-    //   rhat_receive = receive-direction unit vector
-    //   p_o, p_e     = ordinary / extraordinary polarization directions
-    //   Pt, Pr1, Pr2 = transmitter / receiver basis vectors
-    // ------------------------------------------------------------------------
-    vector <TVector3> rhat;
-    vector <TVector3> rhat_receive;
-    vector <TVector3> p_o;
-    vector <TVector3> p_e;
-    vector <TVector3> p_e_rx;
-    vector <TVector3> p_o_rx;
-    vector <TVector3> acrossp_o;
-    vector <TVector3> acrossp_e;
-    vector <TVector3> extraordinary;
-    vector <TVector3> Pt;
-    vector <TVector3> Pt_extraordinary;
-    vector <TVector3> Pt_ordinary;
-    vector <TVector3> Pr1;
-
-    vector <TVector3> Pr2;
-
-    // These term1/term2/term3 arrays appear to be placeholders for decomposed
-    // contributions to receiver projections or signal terms.
-    vector <vector <double>> term1_Pr1;
-    vector <vector <double>> term2_Pr1;
-    vector <vector <double>> term3_Pr1;
-    vector <vector <double>> term1_Pr2;
-    vector <vector <double>> term2_Pr2;
-    vector <vector <double>> term3_Pr2;
-
-    // Same kind of decomposition, but for distance-based rather than depth-based scans
-    vector <vector <double>> term1_Pr1_distances;
-    vector <vector <double>> term2_Pr1_distances;
-    vector <vector <double>> term3_Pr1_distances;
-    vector <vector <double>> term1_Pr2_distances;
-    vector <vector <double>> term2_Pr2_distances;
-    vector <vector <double>> term3_Pr2_distances;
-
-    TVector3 temp;
-
-    // One entry per station
-    rhat.resize(6);
-    rhat_receive.resize(6);
-    extraordinary.resize(6);
-    p_o.resize(6);
-    p_e.resize(6);
-    p_o_rx.resize(6);
-    p_e_rx.resize(6);
-    acrossp_o.resize(6);
-    acrossp_e.resize(6);
-    Pt.resize(6);
-    Pt_extraordinary.resize(6);
-    Pt_ordinary.resize(6);
-    Pr1.resize(6);
-
-    Pr2.resize(6);
-    term1_Pr1.resize(6);
-    term2_Pr1.resize(6);
-    term3_Pr1.resize(6);
-    term1_Pr2.resize(6);
-    term2_Pr2.resize(6);
-    term3_Pr2.resize(6);
-
-    term1_Pr1_distances.resize(6);
-    term2_Pr1_distances.resize(6);
-    term3_Pr1_distances.resize(6);
-    term1_Pr2_distances.resize(6);
-    term2_Pr2_distances.resize(6);
-    term3_Pr2_distances.resize(6);
-
-
-    // ------------------------------------------------------------------------
     // Fit / model functions and graphs used later for comparing the predicted
-    // interference/attenuation envelopes to the measured data.
+    // interference/attenuation envelopes to the measured model_data.
     // ------------------------------------------------------------------------
     TF1 *f1[geom.NSTATIONS];
 
@@ -651,7 +318,7 @@ int main(int argc, char** argv) {
     vector< vector< vector<double> > > vattens;
 
     // Resize outer station dimension
-    data.vistep.resize(geom.NSTATIONS);
+    model_data.vistep.resize(geom.NSTATIONS);
     vmag_parameter0.resize(geom.NSTATIONS);
     vmag_atten.resize(geom.NSTATIONS);
     vmag_atten_beam.resize(geom.NSTATIONS);
@@ -704,21 +371,21 @@ int main(int argc, char** argv) {
     TVector3 p_e2;
     for (int i=geom.minstation;i<=geom.maxstation;i++) {
 	const auto overhead_before = clock::now(); 
-        vmag_atten_beam[i].resize(data.vdepth[i].size());
-        vmag_atten_beam_crosspol[i].resize(data.vdepth[i].size());
-        vmag_atten_beam_crosspol_nointerferencefunc[i].resize(data.vdepth[i].size());
-        vmag_atten_beam_crosspol_func[i].resize(data.vdepth[i].size());
-        vspectra[i].resize(data.vdepth[i].size());
-        vattens[i].resize(data.vdepth[i].size());
-        g_spectra[i].resize(data.vdepth[i].size());
-        vmag_atten[i].resize(data.vdepth[i].size());
-        vmag_parameter0[i].resize(data.vdepth[i].size());
-        vmag_func_noadjust[i].resize(data.vdepth[i].size());
+        vmag_atten_beam[i].resize(model_data.vdepth[i].size());
+        vmag_atten_beam_crosspol[i].resize(model_data.vdepth[i].size());
+        vmag_atten_beam_crosspol_nointerferencefunc[i].resize(model_data.vdepth[i].size());
+        vmag_atten_beam_crosspol_func[i].resize(model_data.vdepth[i].size());
+        vspectra[i].resize(model_data.vdepth[i].size());
+        vattens[i].resize(model_data.vdepth[i].size());
+        g_spectra[i].resize(model_data.vdepth[i].size());
+        vmag_atten[i].resize(model_data.vdepth[i].size());
+        vmag_parameter0[i].resize(model_data.vdepth[i].size());
+        vmag_func_noadjust[i].resize(model_data.vdepth[i].size());
 
         // Measured data vectors only exist for A1-A5, not ARIANNA
         if (i!=5) {
-            data.vtotal_distances[i].resize(data.vdepth_data[i].size());
-            data.vtotal_distances_err[i].resize(data.vdepth_data[i].size());
+            model_data.vtotal_distances[i].resize(model_data.vdepth_data[i].size());
+            model_data.vtotal_distances_err[i].resize(model_data.vdepth_data[i].size());
         }
     
         // Smallest possible source-receiver separation is the horizontal distance
@@ -742,7 +409,7 @@ int main(int argc, char** argv) {
         // Loop over all pulser depths for this station
         // --------------------------------------------------------------------
         const auto before = clock::now();
-        for (int idepth=0;idepth<data.vdepth[i].size();idepth++) {
+        for (int idepth=0;idepth<model_data.vdepth[i].size();idepth++) {
 
             // Reduced 2D geometry for ray tracing:
             // x = horizontal separation, z = depth
@@ -751,24 +418,24 @@ int main(int argc, char** argv) {
             posstation[1]=geom.station_depths[i];
             double pospulser[2];
             pospulser[0]=0.;
-            pospulser[1]=data.vdepth[i][idepth];
+            pospulser[1]=model_data.vdepth[i][idepth];
 
             // Full 3D pulser position, useful for later geometric interpretation
             TVector3 pospulser3D;
             pospulser3D.SetX(geom.pulser_coords[0]);
             pospulser3D.SetY(geom.pulser_coords[1]);
-            pospulser3D.SetZ(data.vdepth[i][idepth]);
+            pospulser3D.SetZ(model_data.vdepth[i][idepth]);
 
             // 3D vector from pulser to station
             geom.pulsertostation[i][0]=(geom.station_coords[i][0]-geom.pulser_coords[0]);
             geom.pulsertostation[i][1]=(geom.station_coords[i][1]-geom.pulser_coords[1]);
-            geom.pulsertostation[i][2]=geom.station_depths[i]-data.vdepth[i][idepth];
+            geom.pulsertostation[i][2]=geom.station_depths[i]-model_data.vdepth[i][idepth];
 
             // Legacy / diagnostic "special" geometry, based on station 0 and the first pulser depth
             double atten_special;
             double pospulser_special[2];
             pospulser_special[0]=0.;
-            pospulser_special[1]=data.vdepth[0][0];
+            pospulser_special[1]=model_data.vdepth[0][0];
             double posstation_special[2];
             posstation_special[0]=sqrt(pow(geom.station_coords[0][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[0][1]-geom.pulser_coords[1],2));
             posstation_special[1]=geom.station_depths[0];
@@ -794,9 +461,9 @@ int main(int argc, char** argv) {
             double *paramsre;
 
             // Store outputs from the ray tracer
-            data.voutput6[i].push_back(getresults[6]);
-            data.voutput7[i].push_back(getresults[7]);
-            data.voutput8[i].push_back(getresults[8]);
+            model_data.voutput6[i].push_back(getresults[6]);
+            model_data.voutput7[i].push_back(getresults[7]);
+            model_data.voutput8[i].push_back(getresults[8]);
 
 	    const sec overhead_duration = clock::now() - overhead_before;
             overhead += static_cast<double>( overhead_duration.count() );
@@ -871,9 +538,9 @@ int main(int argc, char** argv) {
                 nvec_thisstep.resize(3);
 
                 // Principal axis at the start of the path
-			nvec_thisstep[0]=gn1->Eval(zs[0]);
-			nvec_thisstep[1]=gn2->Eval(zs[0]);
-			nvec_thisstep[2]=gn3->Eval(zs[0]);
+			nvec_thisstep[0]=ice.gn1->Eval(zs[0]);
+			nvec_thisstep[1]=ice.gn2->Eval(zs[0]);
+			nvec_thisstep[2]=ice.gn3->Eval(zs[0]);
 
 			TVector3 rhat_thisstep;
 
@@ -916,9 +583,9 @@ int main(int argc, char** argv) {
 
 			    // Refractive indices at this path point
 			const auto eval_before = clock::now(); 
-			    nvec_thisstep[0]=gn1->Eval(zs[istep]);
-			    nvec_thisstep[1]=gn2->Eval(zs[istep]);
-			    nvec_thisstep[2]=gn3->Eval(zs[istep]);
+			    nvec_thisstep[0]=ice.gn1->Eval(zs[istep]);
+			    nvec_thisstep[1]=ice.gn2->Eval(zs[istep]);
+			    nvec_thisstep[2]=ice.gn3->Eval(zs[istep]);
 			const sec eval_duration = clock::now() - eval_before;
 			eval_time += static_cast<double>( eval_duration.count() );
 
@@ -931,7 +598,7 @@ int main(int argc, char** argv) {
 				rhat_thisstep[2]=-1.*(zs[istep]-zs[istep-UZAIRSTEP]);
 
 				// Debugging / illustration printout for A1 near -1000 m
-				if (i==0 && idepth==g_idepth[i]->Eval(-1000.)) {
+				if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.)) {
 				    if (istep==50) {
 					cout << "receive angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
 					cout << "recieve vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
@@ -1004,7 +671,7 @@ int main(int argc, char** argv) {
 				if (abs((double)(istep-(int)res.size()))<=UZAIRSTEP) {
 
 
-				    if (i==5 && idepth==g_idepth[i]->Eval(-400.))
+				    if (i==5 && idepth==model_data.g_idepth[i]->Eval(-400.))
 				    cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
 
 				    double theta_e1,theta_e2;
@@ -1028,8 +695,8 @@ int main(int argc, char** argv) {
 					E_e1_phicomponent,E_e2_phicomponent);
 
 				    // Store angle between each Poynting vector and propagation direction
-				    data.vangle_Shat_e1_khat[i].push_back(acos(Shat_e1.Dot(rhat_thisstep)/Shat_e1.Mag()/rhat_thisstep.Mag())*DEGRAD);
-				    data.vangle_Shat_e2_khat[i].push_back(acos(Shat_e2.Dot(rhat_thisstep)/Shat_e2.Mag()/rhat_thisstep.Mag())*DEGRAD);
+				    model_data.vangle_Shat_e1_khat[i].push_back(acos(Shat_e1.Dot(rhat_thisstep)/Shat_e1.Mag()/rhat_thisstep.Mag())*DEGRAD);
+				    model_data.vangle_Shat_e2_khat[i].push_back(acos(Shat_e2.Dot(rhat_thisstep)/Shat_e2.Mag()/rhat_thisstep.Mag())*DEGRAD);
 
 				    // Special ordering swap for ARIANNA in the biaxial case
 				    if (i==5 && cfg.BIAXIAL==1) {
@@ -1040,11 +707,11 @@ int main(int argc, char** argv) {
 				    }
 
 				    // Verbose diagnostics for selected reference depths
-				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
 
 					cout << "At Tx:\n";
-					cout << "A" << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "A" << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
 
 					cout << "angle of yhat is " << angle_yhat << "\n";
 
@@ -1067,7 +734,7 @@ int main(int argc, char** argv) {
 					cout << "diff is " << (thetaE_e1-thetaE_e2)*DEGRAD << "\n";
 					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
 					cout << "diff is " << (thetaE_e1_Sclock-thetaE_e2_Sclock)*DEGRAD << "\n";
-					cout << "depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "depth is " << model_data.vdepth[i][idepth] << "\n";
 					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
 					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
 					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
@@ -1133,12 +800,12 @@ int main(int argc, char** argv) {
 				    }
 
 				    // Store orthogonality / alignment diagnostics
-				    data.vdotShats_tx[i].push_back(Shat_e1.Dot(Shat_e2)/Shat_e1.Mag()/Shat_e2.Mag());
-				    data.vdotEhats_tx[i].push_back(E_e1.Dot(E_e2)/E_e1.Mag()/E_e2.Mag());
-				    data.vdotDhats_tx[i].push_back(p_e1.Dot(p_e2)/p_e1.Mag()/p_e2.Mag());
+				    model_data.vdotShats_tx[i].push_back(Shat_e1.Dot(Shat_e2)/Shat_e1.Mag()/Shat_e2.Mag());
+				    model_data.vdotEhats_tx[i].push_back(E_e1.Dot(E_e2)/E_e1.Mag()/E_e2.Mag());
+				    model_data.vdotDhats_tx[i].push_back(p_e1.Dot(p_e2)/p_e1.Mag()/p_e2.Mag());
 
-				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
 					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
 					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
 					cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
@@ -1148,26 +815,26 @@ int main(int argc, char** argv) {
 				    double beam_tx_e1=sin(Shat_e1.Theta());
 				    double beam_tx_e2=sin(Shat_e2.Theta());
 
-				    data.vtxdepth_beam1[i].push_back(beam_tx_e1);
-				    data.vtxdepth_beam2[i].push_back(beam_tx_e2);
+				    model_data.vtxdepth_beam1[i].push_back(beam_tx_e1);
+				    model_data.vtxdepth_beam2[i].push_back(beam_tx_e2);
 
 				    // Store TX angular diagnostics
-				    data.vtxdepth_theta1[i].push_back(theta_e1*DEGRAD);
-				    data.vtxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+				    model_data.vtxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vtxdepth_theta2[i].push_back(theta_e2*DEGRAD);
 
-				    data.vtxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
-				    data.vtxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+				    model_data.vtxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    model_data.vtxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
 
-				    data.vtxdepthE_theta1[i].push_back(thetaE_e1*DEGRAD);
-				    data.vtxdepthE_theta2[i].push_back(thetaE_e2*DEGRAD);
+				    model_data.vtxdepthE_theta1[i].push_back(thetaE_e1*DEGRAD);
+				    model_data.vtxdepthE_theta2[i].push_back(thetaE_e2*DEGRAD);
 
 
-				    data.vtxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
-				    data.vtxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+				    model_data.vtxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    model_data.vtxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
 
 				    // Angle between E and D for each eigenmode
-				    data.vtxdepth_dispersion1[i].push_back(acos(E_e1.Dot(p_e1)/E_e1.Mag()/p_e1.Mag())*DEGRAD);
-				    data.vtxdepth_dispersion2[i].push_back(acos(E_e2.Dot(p_e2)/E_e2.Mag()/p_e2.Mag())*DEGRAD);
+				    model_data.vtxdepth_dispersion1[i].push_back(acos(E_e1.Dot(p_e1)/E_e1.Mag()/p_e1.Mag())*DEGRAD);
+				    model_data.vtxdepth_dispersion2[i].push_back(acos(E_e2.Dot(p_e2)/E_e2.Mag()/p_e2.Mag())*DEGRAD);
 
 				    // Convert S-clock angles into epsilon parameters
 				    double epsilon1_tx=0.;
@@ -1179,16 +846,16 @@ int main(int argc, char** argv) {
 					epsilon2_tx-=PI;
 				    }
 
-				    data.vepsilon1_tx[i].push_back(epsilon1_tx*DEGRAD);
-				    data.vepsilon2_tx[i].push_back(epsilon2_tx*DEGRAD);
+				    model_data.vepsilon1_tx[i].push_back(epsilon1_tx*DEGRAD);
+				    model_data.vepsilon2_tx[i].push_back(epsilon2_tx*DEGRAD);
 
-				    data.vdiffepsilon_tx[i].push_back((epsilon2_tx-epsilon1_tx)*DEGRAD);
+				    model_data.vdiffepsilon_tx[i].push_back((epsilon2_tx-epsilon1_tx)*DEGRAD);
 
 				    // Store attenuation-only and attenuation×beam estimates at the receiver
-				    data.vrxdepth_atten[i].push_back(VOLTAGENORM*atten);
-				    data.vrxdepth_atten_beam[i].push_back(VOLTAGENORM*data.vrxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*atten);
-				    data.vrxdepth_atten_power[i].push_back(VOLTAGENORM*VOLTAGENORM*atten*atten);
-				    data.vrxdepth_atten_beam_power[i].push_back(VOLTAGENORM*VOLTAGENORM*data.vrxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth]*atten*atten);
+				    model_data.vrxdepth_atten[i].push_back(VOLTAGENORM*atten);
+				    model_data.vrxdepth_atten_beam[i].push_back(VOLTAGENORM*model_data.vrxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*atten);
+				    model_data.vrxdepth_atten_power[i].push_back(VOLTAGENORM*VOLTAGENORM*atten*atten);
+				    model_data.vrxdepth_atten_beam_power[i].push_back(VOLTAGENORM*VOLTAGENORM*model_data.vrxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*atten*atten);
 				    
 				    notflipped_atend=notflipped;
 
@@ -1224,16 +891,16 @@ int main(int argc, char** argv) {
 				    theta_e1_start=theta_e1;
 
 				    // Debug diagnostics at selected reference depths
-				    if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-				    i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
 					cout << "At Rx:\n";
-					cout << "A" << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "A" << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
 					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
-					cout << "depth is " << data.vdepth[i][idepth] << "\n";
+					cout << "depth is " << model_data.vdepth[i][idepth] << "\n";
 
 					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
 					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
-					cout << "This points from pulser to station: " << geom.station_coords[i][0]-geom.pulser_coords[0] << "\t" << geom.station_coords[i][1]-geom.pulser_coords[1] << "\t" << geom.station_depths[i]-data.vdepth[i][idepth] << "\n";
+					cout << "This points from pulser to station: " << geom.station_coords[i][0]-geom.pulser_coords[0] << "\t" << geom.station_coords[i][1]-geom.pulser_coords[1] << "\t" << geom.station_depths[i]-model_data.vdepth[i][idepth] << "\n";
 
 					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
 					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
@@ -1295,20 +962,20 @@ int main(int argc, char** argv) {
 				    }
 
 				    // Store RX-side angular diagnostics
-				    data.vrxdepth_theta1[i].push_back(theta_e1*DEGRAD);
-				    data.vrxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+				    model_data.vrxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vrxdepth_theta2[i].push_back(theta_e2*DEGRAD);
 
 				    // Note: these two lines store theta_e1/theta_e2 rather than thetaE_e1/thetaE_e2.
 				    // That may be intentional or may deserve a later check.
-				    data.vrxdepthE_theta1[i].push_back(theta_e1*DEGRAD);
-				    data.vrxdepthE_theta2[i].push_back(theta_e2*DEGRAD);
+				    model_data.vrxdepthE_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vrxdepthE_theta2[i].push_back(theta_e2*DEGRAD);
 
-				    data.vrxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
-				    data.vrxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+				    model_data.vrxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    model_data.vrxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
 
 
-				    data.vrxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
-				    data.vrxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+				    model_data.vrxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    model_data.vrxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
 
 				    // Convert RX S-clock angles into epsilon parameters
 				    double epsilon1_rx=0.;
@@ -1317,31 +984,31 @@ int main(int argc, char** argv) {
 				    thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
 					epsilon1_rx,epsilon2_rx);
 
-				    data.vepsilon1_rx[i].push_back(epsilon1_rx*DEGRAD);
-				    data.vepsilon2_rx[i].push_back(epsilon2_rx*DEGRAD);
-				    data.vdiffepsilon_rx[i].push_back((epsilon2_rx-epsilon1_rx)*DEGRAD);
+				    model_data.vepsilon1_rx[i].push_back(epsilon1_rx*DEGRAD);
+				    model_data.vepsilon2_rx[i].push_back(epsilon2_rx*DEGRAD);
+				    model_data.vdiffepsilon_rx[i].push_back((epsilon2_rx-epsilon1_rx)*DEGRAD);
 
 				    // Beam factors at the receiver
 				    double beam_rx_e1=sin(Shat_e1.Theta());
 				    double beam_rx_e2=sin(Shat_e2.Theta());
 
-				    data.vrxdepth_beam1[i].push_back(beam_rx_e1);
-				    data.vrxdepth_beam2[i].push_back(beam_rx_e2);
+				    model_data.vrxdepth_beam1[i].push_back(beam_rx_e1);
+				    model_data.vrxdepth_beam2[i].push_back(beam_rx_e2);
 
 				    // Build an orthonormal receiver polarization basis:
 				    //   Pr2 perpendicular to Shat_e1 and +z
 				    //   Pr1 perpendicular to both Pr2 and Shat_e1
 				    TVector3 plusz(0.,0.,1.);
-				    Pr2[i]=Shat_e1.Cross(plusz);
-				    if (Pr2[i].Mag()<HOWSMALLISTOOSMALL){
-					cout << "Pr2[i] is " << Pr2[i].Mag() << "\n";
+				    model_data.Pr2[i]=Shat_e1.Cross(plusz);
+				    if (model_data.Pr2[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "model_data.Pr2[i] is " << model_data.Pr2[i].Mag() << "\n";
 				    }
-				    Pr2[i].SetMag(1.);
-				    Pr1[i]=Pr2[i].Cross(Shat_e1);
-				    if (Pr1[i].Mag()<HOWSMALLISTOOSMALL){
-					cout << "Pr1[i] is " << Pr1[i].Mag() << "\n";
+				    model_data.Pr2[i].SetMag(1.);
+				    model_data.Pr1[i]=model_data.Pr2[i].Cross(Shat_e1);
+				    if (model_data.Pr1[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "model_data.Pr1[i] is " << model_data.Pr1[i].Mag() << "\n";
 				    }
-				    Pr1[i].SetMag(1.);
+				    model_data.Pr1[i].SetMag(1.);
 				}
 
 				// ----------------------------------------------------
@@ -1388,7 +1055,7 @@ int main(int argc, char** argv) {
 				sumlength+=length;
 
 				// Store detailed along-path diagnostics only for a special pulser depth
-				if (idepth==(int)(g_idepth[i]->Eval(geom.depth_special))) {
+				if (idepth==(int)(model_data.g_idepth[i]->Eval(geom.depth_special))) {
 
 				    vtheta1_alongpath[i].push_back(theta_e1*DEGRAD);
 				    vtheta2_alongpath[i].push_back(theta_e2*DEGRAD);
@@ -1399,7 +1066,7 @@ int main(int argc, char** argv) {
 				    vnotflipped_alongpath[i].push_back(notflipped);
 				    vdeltan[i].push_back(deltan_alongpath);
 				    vdepth_step[i].push_back(zs[istep]);
-				    data.vistep[i].push_back((double)istep);
+				    model_data.vistep[i].push_back((double)istep);
 				    vlengths[i].push_back(sumlength);
 				    vattenlengths[i].push_back(atten_length);
 				}
@@ -1407,7 +1074,7 @@ int main(int argc, char** argv) {
 			    else {                        
 				// Fallback for the first step if needed:
 				// use the previously stored launch-direction unit vector.
-				rhat_thisstep=rhat[i];
+				rhat_thisstep=model_data.rhat_launch[i];
 			    }
 			}
 			const sec uzair_duration = clock::now() - uzair_before;
@@ -1443,48 +1110,48 @@ int main(int argc, char** argv) {
 			// ----------------------------------------------------------------
 
 			// Mode 1 contribution into receiver channel r1
-			theta1_Sclock_atrx=data.vrxdepthE_theta1_Sclock[i][idepth];
-			theta2_Sclock_atrx=data.vrxdepthE_theta2_Sclock[i][idepth];
+			theta1_Sclock_atrx=model_data.vrxdepthE_theta1_Sclock[i][idepth];
+			theta2_Sclock_atrx=model_data.vrxdepthE_theta2_Sclock[i][idepth];
 
 
-			data.vV1_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]);
-			data.vE1_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]);
+			model_data.vV1_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]);
+			model_data.vE1_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]);
 
 			// Mode 2 contribution into receiver channel r1
-			data.vV2_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]);
-			data.vE2_r1[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]);
+			model_data.vV2_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]);
+			model_data.vE2_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]);
 
 			// LPDA-like projection: remove the component parallel to the beam axis
-			data.vV1_r1_lpda[i].push_back(data.vV1_r1[i][idepth]*sqrt(1.-data.vrxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]));
-			data.vV2_r1_lpda[i].push_back(data.vV2_r1[i][idepth]*sqrt(1.-data.vrxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]));
+			model_data.vV1_r1_lpda[i].push_back(model_data.vV1_r1[i][idepth]*sqrt(1.-model_data.vrxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]));
+			model_data.vV2_r1_lpda[i].push_back(model_data.vV2_r1[i][idepth]*sqrt(1.-model_data.vrxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]));
 
 			// Store quadratic combinations for interference calculations
-			data.vV1squared_r1[i].push_back(data.vV1_r1[i][idepth]*data.vV1_r1[i][idepth]);
-			data.vV2squared_r1[i].push_back(data.vV2_r1[i][idepth]*data.vV2_r1[i][idepth]);
-			data.vV1V2_r1[i].push_back(data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]);
+			model_data.vV1squared_r1[i].push_back(model_data.vV1_r1[i][idepth]*model_data.vV1_r1[i][idepth]);
+			model_data.vV2squared_r1[i].push_back(model_data.vV2_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
+			model_data.vV1V2_r1[i].push_back(model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
 
 			// Mode 1 contribution into receiver channel r2
-			data.vV1_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth]);
-			data.vE1_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*data.vtxdepth_beam1[i][idepth]);
+			model_data.vV1_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]);
+			model_data.vE1_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]);
 
 			// Mode 2 contribution into receiver channel r2
-			data.vV2_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]*data.vrxdepth_beam2[i][idepth]);
-			data.vE2_r2[i].push_back(data.vrxdepth_atten[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*data.vtxdepth_beam2[i][idepth]);
+			model_data.vV2_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]);
+			model_data.vE2_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]);
 
 			// More quadratic combinations for the second receiver channel
-			data.vV1squared_r2[i].push_back(data.vV1_r2[i][idepth]*data.vV1_r2[i][idepth]);
-			data.vV2squared_r2[i].push_back(data.vV2_r2[i][idepth]*data.vV2_r2[i][idepth]);
-			data.vV1V2_r2[i].push_back(data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]);
+			model_data.vV1squared_r2[i].push_back(model_data.vV1_r2[i][idepth]*model_data.vV1_r2[i][idepth]);
+			model_data.vV2squared_r2[i].push_back(model_data.vV2_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
+			model_data.vV1V2_r2[i].push_back(model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
 
 			// Debug print for a reference pulser depth
-			if (idepth==g_idepth[i]->Eval(-1000.)){
-			    cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << i << "\t" << data.vV1squared_r2[i][idepth] << "\t" << data.vV2squared_r2[i][idepth] << "\t" << data.vV1V2_r2[i][idepth] << "\n";
+			if (idepth==model_data.g_idepth[i]->Eval(-1000.)){
+			    cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << i << "\t" << model_data.vV1squared_r2[i][idepth] << "\t" << model_data.vV2squared_r2[i][idepth] << "\t" << model_data.vV1V2_r2[i][idepth] << "\n";
 			}
 
 			// Negative cross terms, convenient for expressions written as
 			// A+B-2*sqrt(AB)*sin^2(phi) or equivalent forms
-			data.voppositeV1V2_r2[i].push_back(-1.*data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]);
-			data.voppositeV1V2_r1[i].push_back(-1.*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]);
+			model_data.voppositeV1V2_r2[i].push_back(-1.*model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
+			model_data.voppositeV1V2_r1[i].push_back(-1.*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
 
 
 			// ----------------------------------------------------------------
@@ -1495,29 +1162,29 @@ int main(int argc, char** argv) {
 			// Versions are stored both for voltage-like quantities and
 			// field/Poynting-like quantities.
 			// ----------------------------------------------------------------
-			data.venvelope_minus_r1[i].push_back((data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])*(data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth]));
-			data.vSenvelope_minus_r1[i].push_back((data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])*(data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth]));
+			model_data.venvelope_minus_r1[i].push_back((model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])*(model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth]));
+			model_data.vSenvelope_minus_r1[i].push_back((model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])*(model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth]));
 
-			data.venvelope_minus_r1_lpda[i].push_back((data.vV1_r1_lpda[i][idepth]-data.vV2_r1_lpda[i][idepth])*(data.vV1_r1_lpda[i][idepth]-data.vV2_r1_lpda[i][idepth]));
+			model_data.venvelope_minus_r1_lpda[i].push_back((model_data.vV1_r1_lpda[i][idepth]-model_data.vV2_r1_lpda[i][idepth])*(model_data.vV1_r1_lpda[i][idepth]-model_data.vV2_r1_lpda[i][idepth]));
 
-			data.venvelope_minus_r2[i].push_back((data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])*(data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth]));
-			data.vSenvelope_minus_r2[i].push_back((data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])*(data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth]));
-			data.venvelope_plus_r1[i].push_back((data.vV2_r1[i][idepth]+data.vV1_r1[i][idepth])*(data.vV1_r1[i][idepth]+data.vV2_r1[i][idepth]));
-			data.vSenvelope_plus_r1[i].push_back((data.vE2_r1[i][idepth]+data.vE1_r1[i][idepth])*(data.vE1_r1[i][idepth]+data.vE2_r1[i][idepth]));
-			data.venvelope_plus_r1_lpda[i].push_back((data.vV2_r1_lpda[i][idepth]+data.vV1_r1_lpda[i][idepth])*(data.vV1_r1_lpda[i][idepth]+data.vV2_r1_lpda[i][idepth]));
+			model_data.venvelope_minus_r2[i].push_back((model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])*(model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth]));
+			model_data.vSenvelope_minus_r2[i].push_back((model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])*(model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth]));
+			model_data.venvelope_plus_r1[i].push_back((model_data.vV2_r1[i][idepth]+model_data.vV1_r1[i][idepth])*(model_data.vV1_r1[i][idepth]+model_data.vV2_r1[i][idepth]));
+			model_data.vSenvelope_plus_r1[i].push_back((model_data.vE2_r1[i][idepth]+model_data.vE1_r1[i][idepth])*(model_data.vE1_r1[i][idepth]+model_data.vE2_r1[i][idepth]));
+			model_data.venvelope_plus_r1_lpda[i].push_back((model_data.vV2_r1_lpda[i][idepth]+model_data.vV1_r1_lpda[i][idepth])*(model_data.vV1_r1_lpda[i][idepth]+model_data.vV2_r1_lpda[i][idepth]));
 
-			data.venvelope_plus_r2[i].push_back((data.vV2_r2[i][idepth]+data.vV1_r2[i][idepth])*(data.vV1_r2[i][idepth]+data.vV2_r2[i][idepth]));
-			data.vSenvelope_plus_r2[i].push_back((data.vE2_r2[i][idepth]+data.vE1_r2[i][idepth])*(data.vE1_r2[i][idepth]+data.vE2_r2[i][idepth]));
+			model_data.venvelope_plus_r2[i].push_back((model_data.vV2_r2[i][idepth]+model_data.vV1_r2[i][idepth])*(model_data.vV1_r2[i][idepth]+model_data.vV2_r2[i][idepth]));
+			model_data.vSenvelope_plus_r2[i].push_back((model_data.vE2_r2[i][idepth]+model_data.vE1_r2[i][idepth])*(model_data.vE1_r2[i][idepth]+model_data.vE2_r2[i][idepth]));
 
-			data.vvenvelope_minus_r1[i].push_back(sqrt((data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])*(data.vV1_r1[i][idepth]-data.vV2_r1[i][idepth])));
-			data.vvenvelope_minus_r2[i].push_back(sqrt((data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])*(data.vV1_r2[i][idepth]-data.vV2_r2[i][idepth])));
-			data.vvenvelope_plus_r1[i].push_back(sqrt((data.vV2_r1[i][idepth]+data.vV1_r1[i][idepth])*(data.vV1_r1[i][idepth]+data.vV2_r1[i][idepth])));
-			data.vvenvelope_plus_r2[i].push_back(sqrt((data.vV2_r2[i][idepth]+data.vV1_r2[i][idepth])*(data.vV1_r2[i][idepth]+data.vV2_r2[i][idepth])));
+			model_data.vvenvelope_minus_r1[i].push_back(sqrt((model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])*(model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])));
+			model_data.vvenvelope_minus_r2[i].push_back(sqrt((model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])*(model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])));
+			model_data.vvenvelope_plus_r1[i].push_back(sqrt((model_data.vV2_r1[i][idepth]+model_data.vV1_r1[i][idepth])*(model_data.vV1_r1[i][idepth]+model_data.vV2_r1[i][idepth])));
+			model_data.vvenvelope_plus_r2[i].push_back(sqrt((model_data.vV2_r2[i][idepth]+model_data.vV1_r2[i][idepth])*(model_data.vV1_r2[i][idepth]+model_data.vV2_r2[i][idepth])));
 
-			data.vEenvelope_minus_r1[i].push_back(sqrt((data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])*(data.vE1_r1[i][idepth]-data.vE2_r1[i][idepth])));
-			data.vEenvelope_minus_r2[i].push_back(sqrt((data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])*(data.vE1_r2[i][idepth]-data.vE2_r2[i][idepth])));
-			data.vEenvelope_plus_r1[i].push_back(sqrt((data.vE2_r1[i][idepth]+data.vE1_r1[i][idepth])*(data.vE1_r1[i][idepth]+data.vE2_r1[i][idepth])));
-			data.vEenvelope_plus_r2[i].push_back(sqrt((data.vE2_r2[i][idepth]+data.vE1_r2[i][idepth])*(data.vE1_r2[i][idepth]+data.vE2_r2[i][idepth])));
+			model_data.vEenvelope_minus_r1[i].push_back(sqrt((model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])*(model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])));
+			model_data.vEenvelope_minus_r2[i].push_back(sqrt((model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])*(model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])));
+			model_data.vEenvelope_plus_r1[i].push_back(sqrt((model_data.vE2_r1[i][idepth]+model_data.vE1_r1[i][idepth])*(model_data.vE1_r1[i][idepth]+model_data.vE2_r1[i][idepth])));
+			model_data.vEenvelope_plus_r2[i].push_back(sqrt((model_data.vE2_r2[i][idepth]+model_data.vE1_r2[i][idepth])*(model_data.vE1_r2[i][idepth]+model_data.vE2_r2[i][idepth])));
 
 			// ----------------------------------------------------------------
 			// Build a frequency spectrum for this station and pulser depth.
@@ -1529,9 +1196,9 @@ int main(int argc, char** argv) {
 			    double thisfreq=cfg.vfreqs[ifreq];
 			    double thissumphase=sumphase*thisfreq/freq;
 
-			    vspectra[i][idepth].push_back(vattens[i][idepth][ifreq]/data.vrxdepth_atten[i][idepth]*(data.venvelope_plus_r1[i][idepth]-4*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]*sin(thissumphase)*sin(thissumphase)));
-			    if (i==5 && idepth==g_idepth[i]->Eval(-1000.))
-			    cout << "i, vattens[i][idepth], data.vrxdepth_atten[i][idepth], vspectra are " << i << "\t" << vattens[i][idepth][ifreq] << "\t" << data.vrxdepth_atten[i][idepth] << "\t" << vspectra[i][idepth][ifreq] << "\n";
+			    vspectra[i][idepth].push_back(vattens[i][idepth][ifreq]/model_data.vrxdepth_atten[i][idepth]*(model_data.venvelope_plus_r1[i][idepth]-4*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]*sin(thissumphase)*sin(thissumphase)));
+			    if (i==5 && idepth==model_data.g_idepth[i]->Eval(-1000.))
+			    cout << "i, vattens[i][idepth], model_data.vrxdepth_atten[i][idepth], vspectra are " << i << "\t" << vattens[i][idepth][ifreq] << "\t" << model_data.vrxdepth_atten[i][idepth] << "\t" << vspectra[i][idepth][ifreq] << "\n";
 			}
 
 			// Time delay corresponding to the accumulated phase difference
@@ -1546,55 +1213,55 @@ int main(int argc, char** argv) {
 			// Final interference-modified power / Poynting-like quantities
 			// for the two receiver channels.
 			// ----------------------------------------------------------------
-			data.vpower_r1[i].push_back(data.venvelope_plus_r1[i][idepth]-4*data.vV1_r1[i][idepth]*data.vV2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
-			data.vpoynting_r1[i].push_back(data.vSenvelope_plus_r1[i][idepth]-4*data.vE1_r1[i][idepth]*data.vE2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpower_r1[i].push_back(model_data.venvelope_plus_r1[i][idepth]-4*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpoynting_r1[i].push_back(model_data.vSenvelope_plus_r1[i][idepth]-4*model_data.vE1_r1[i][idepth]*model_data.vE2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
 
-			data.vpower_r1_lpda[i].push_back(data.venvelope_plus_r1_lpda[i][idepth]-4*data.vV1_r1_lpda[i][idepth]*data.vV2_r1_lpda[i][idepth]*sin(sumphase)*sin(sumphase));
-			data.vpower_r2[i].push_back(data.venvelope_plus_r2[i][idepth]-4*data.vV1_r2[i][idepth]*data.vV2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
-			data.vpoynting_r2[i].push_back(data.vSenvelope_plus_r2[i][idepth]-4*data.vE1_r2[i][idepth]*data.vE2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpower_r1_lpda[i].push_back(model_data.venvelope_plus_r1_lpda[i][idepth]-4*model_data.vV1_r1_lpda[i][idepth]*model_data.vV2_r1_lpda[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpower_r2[i].push_back(model_data.venvelope_plus_r2[i][idepth]-4*model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpoynting_r2[i].push_back(model_data.vSenvelope_plus_r2[i][idepth]-4*model_data.vE1_r2[i][idepth]*model_data.vE2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
 
 			// Convert power-like quantities into amplitude-like quantities
-			data.vvoltage_r1[i].push_back(sqrt(data.vpower_r1[i][idepth]));
-			data.vfield_r1[i].push_back(sqrt(data.vpoynting_r1[i][idepth]));
-			data.vvoltage_r1_lpda[i].push_back(sqrt(data.vpower_r1_lpda[i][idepth]));
-			data.vvoltage_r2[i].push_back(sqrt(data.vpower_r2[i][idepth]));
-			data.vfield_r2[i].push_back(sqrt(data.vpoynting_r2[i][idepth]));
+			model_data.vvoltage_r1[i].push_back(sqrt(model_data.vpower_r1[i][idepth]));
+			model_data.vfield_r1[i].push_back(sqrt(model_data.vpoynting_r1[i][idepth]));
+			model_data.vvoltage_r1_lpda[i].push_back(sqrt(model_data.vpower_r1_lpda[i][idepth]));
+			model_data.vvoltage_r2[i].push_back(sqrt(model_data.vpower_r2[i][idepth]));
+			model_data.vfield_r2[i].push_back(sqrt(model_data.vpoynting_r2[i][idepth]));
 
 			// Detailed printout at selected reference depths
-			if (i==0 && idepth==g_idepth[i]->Eval(-1000.) ||
-			i==5 && idepth==g_idepth[i]->Eval(-400.)) {
+			if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+			i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
 
-			    cout << "A " << i+1 << ", depth is " << data.vdepth[i][idepth] << "\n";
+			    cout << "A " << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
 
 			    cout << "before scalefactors:\n";
-			    cout << "powers are " << data.vpower_r1[i][idepth] << "\t" << data.vpower_r2[i][idepth] << "\n";
-			    cout << "voltages are " << data.vvoltage_r1[i][idepth] << "\t" << data.vvoltage_r2[i][idepth] << "\n";
-			    cout << "lpda voltages are " << data.vvoltage_r1_lpda[i][idepth] << "\t" << data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "powers are " << model_data.vpower_r1[i][idepth] << "\t" << model_data.vpower_r2[i][idepth] << "\n";
+			    cout << "voltages are " << model_data.vvoltage_r1[i][idepth] << "\t" << model_data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "lpda voltages are " << model_data.vvoltage_r1_lpda[i][idepth] << "\t" << model_data.vvoltage_r2[i][idepth] << "\n";
 
 			    // Scale to a convenient display size
-			    double scalefactor=0.2/sqrt(data.vvoltage_r1[i][idepth]*data.vvoltage_r1[i][idepth]+data.vvoltage_r2[i][idepth]*data.vvoltage_r2[i][idepth]);
+			    double scalefactor=0.2/sqrt(model_data.vvoltage_r1[i][idepth]*model_data.vvoltage_r1[i][idepth]+model_data.vvoltage_r2[i][idepth]*model_data.vvoltage_r2[i][idepth]);
 
 			    // Common attenuation × beam prefactor
-			    double prefactor=data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth];
-			    cout << "voltage r1 is " << scalefactor*data.vvoltage_r1[i][idepth] << "\n";
-			    cout << "x, z components of voltage r1 are " << data.vtxdepth_beam1[i][idepth]*scalefactor*data.vvoltage_r1[i][idepth] << "\t" << sqrt(1.-data.vtxdepth_beam1[i][idepth]*data.vtxdepth_beam1[i][idepth])*scalefactor*data.vvoltage_r1[i][idepth] << "\n";
+			    double prefactor=model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth];
+			    cout << "voltage r1 is " << scalefactor*model_data.vvoltage_r1[i][idepth] << "\n";
+			    cout << "x, z components of voltage r1 are " << model_data.vtxdepth_beam1[i][idepth]*scalefactor*model_data.vvoltage_r1[i][idepth] << "\t" << sqrt(1.-model_data.vtxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth])*scalefactor*model_data.vvoltage_r1[i][idepth] << "\n";
 
-			    cout << "voltage r2 is " << scalefactor*data.vvoltage_r2[i][idepth] << "\n";
-			    cout << "polarization angle is " << DEGRAD*atan2(data.vvoltage_r2[i][idepth],data.vvoltage_r1[i][idepth]) << "\n";
+			    cout << "voltage r2 is " << scalefactor*model_data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "polarization angle is " << DEGRAD*atan2(model_data.vvoltage_r2[i][idepth],model_data.vvoltage_r1[i][idepth]) << "\n";
 			    cout << "thetas_Sclock_atrx are " << theta1_Sclock_atrx << "\t" << theta2_Sclock_atrx << "\n";
 			    cout << "diff is " << (theta1_Sclock_atrx-theta2_Sclock_atrx) << "\n";
-			    cout << "thetas_Sclock_attx are " << data.vtxdepthE_theta1_Sclock[i][idepth] << "\t" << data.vtxdepthE_theta2_Sclock[i][idepth] << "\n";
-			    cout << "diff is " << (data.vtxdepthE_theta1_Sclock[i][idepth]-data.vtxdepthE_theta2_Sclock[i][idepth]) << "\n";
+			    cout << "thetas_Sclock_attx are " << model_data.vtxdepthE_theta1_Sclock[i][idepth] << "\t" << model_data.vtxdepthE_theta2_Sclock[i][idepth] << "\n";
+			    cout << "diff is " << (model_data.vtxdepthE_theta1_Sclock[i][idepth]-model_data.vtxdepthE_theta2_Sclock[i][idepth]) << "\n";
 
-			    cout << "data.vV1_r1, data.vV2_r1 are " << data.vV1_r1[i][idepth]/prefactor << "\t" << data.vV2_r1[i][idepth]/prefactor << "\n";
-			    cout << "data.vV1_r2, data.vV2_r2 are " << data.vV1_r2[i][idepth]/prefactor << "\t" << data.vV2_r2[i][idepth]/prefactor << "\n";
+			    cout << "model_data.vV1_r1, model_data.vV2_r1 are " << model_data.vV1_r1[i][idepth]/prefactor << "\t" << model_data.vV2_r1[i][idepth]/prefactor << "\n";
+			    cout << "model_data.vV1_r2, model_data.vV2_r2 are " << model_data.vV1_r2[i][idepth]/prefactor << "\t" << model_data.vV2_r2[i][idepth]/prefactor << "\n";
 
-			    cout << "ray 1 at tx is " << scalefactor*data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*cos(data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD) << "\n";
-			    cout << "ray 2 at tx is " << scalefactor*data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*cos(data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "ray 1 at tx is " << scalefactor*model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "ray 2 at tx is " << scalefactor*model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD) << "\n";
 			    cout << "fraction of wavelength is " << sumphase/(2.*PI) << "\n";
-			    cout << "data.vpower_r1+data.vpower_r2 \t" <<data.vpower_r1[i][idepth]+data.vpower_r2[i][idepth] << "\n";
-			    cout << "prefactor is " << pow(data.vrxdepth_atten[i][idepth]*data.vtxdepth_beam1[i][idepth]*data.vrxdepth_beam1[i][idepth],2) << "\n";
-			    cout << "three factors are " << data.vrxdepth_atten[i][idepth] << "\t" << data.vtxdepth_beam1[i][idepth] << "\t" << data.vrxdepth_beam1[i][idepth] << "\n";
+			    cout << "model_data.vpower_r1+model_data.vpower_r2 \t" <<model_data.vpower_r1[i][idepth]+model_data.vpower_r2[i][idepth] << "\n";
+			    cout << "prefactor is " << pow(model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth],2) << "\n";
+			    cout << "three factors are " << model_data.vrxdepth_atten[i][idepth] << "\t" << model_data.vtxdepth_beam1[i][idepth] << "\t" << model_data.vrxdepth_beam1[i][idepth] << "\n";
 
 
 			}
@@ -1608,10 +1275,10 @@ int main(int argc, char** argv) {
 			// Same quantities are computed both for voltage-like and field-like
 			// amplitudes.
 			// ----------------------------------------------------------------
-			data.vpolarization_Psi_rx[i].push_back(atan2(data.vvoltage_r2[i][idepth],data.vvoltage_r1[i][idepth])*DEGRAD);
-			data.vpolarization_Omega_rx[i].push_back(acos(data.vvoltage_r1[i][idepth]/(sqrt(data.vvoltage_r1[i][idepth]*data.vvoltage_r1[i][idepth]+data.vvoltage_r2[i][idepth]*data.vvoltage_r2[i][idepth])))*DEGRAD);
-			data.vEpolarization_Psi_rx[i].push_back(atan2(data.vfield_r2[i][idepth],data.vfield_r1[i][idepth])*DEGRAD);
-			data.vEpolarization_Omega_rx[i].push_back(acos(data.vfield_r1[i][idepth]/(sqrt(data.vfield_r1[i][idepth]*data.vfield_r1[i][idepth]+data.vfield_r2[i][idepth]*data.vfield_r2[i][idepth])))*DEGRAD);
+			model_data.vpolarization_Psi_rx[i].push_back(atan2(model_data.vvoltage_r2[i][idepth],model_data.vvoltage_r1[i][idepth])*DEGRAD);
+			model_data.vpolarization_Omega_rx[i].push_back(acos(model_data.vvoltage_r1[i][idepth]/(sqrt(model_data.vvoltage_r1[i][idepth]*model_data.vvoltage_r1[i][idepth]+model_data.vvoltage_r2[i][idepth]*model_data.vvoltage_r2[i][idepth])))*DEGRAD);
+			model_data.vEpolarization_Psi_rx[i].push_back(atan2(model_data.vfield_r2[i][idepth],model_data.vfield_r1[i][idepth])*DEGRAD);
+			model_data.vEpolarization_Omega_rx[i].push_back(acos(model_data.vfield_r1[i][idepth]/(sqrt(model_data.vfield_r1[i][idepth]*model_data.vfield_r1[i][idepth]+model_data.vfield_r2[i][idepth]*model_data.vfield_r2[i][idepth])))*DEGRAD);
 
 			// Store total geometric path length
 			vsumlength[i].push_back(sumlength);
@@ -1619,9 +1286,9 @@ int main(int argc, char** argv) {
 			// Refractive indices at the pulser depth itself
 			vector<double> nvec_thisdepth;
 			nvec_thisdepth.resize(3);
-			nvec_thisdepth[0]=gn1->Eval(data.vdepth[i][idepth]);
-			nvec_thisdepth[1]=gn2->Eval(data.vdepth[i][idepth]);
-			nvec_thisdepth[2]=gn3->Eval(data.vdepth[i][idepth]);
+			nvec_thisdepth[0]=ice.gn1->Eval(model_data.vdepth[i][idepth]);
+			nvec_thisdepth[1]=ice.gn2->Eval(model_data.vdepth[i][idepth]);
+			nvec_thisdepth[2]=ice.gn3->Eval(model_data.vdepth[i][idepth]);
 
 			// ----------------------------------------------------------------
 			// Build launch and receive direction unit vectors either from
@@ -1640,36 +1307,36 @@ int main(int argc, char** argv) {
 
 			    // Launch direction
 			    vrotate.SetMag(1.);
-			    rhat[i]=plusz;
-			    rhat[i].Rotate(launch_angle,vrotate);
+			    model_data.rhat_launch[i]=plusz;
+			    model_data.rhat_launch[i].Rotate(launch_angle,vrotate);
 
 			    // Receive direction
-			    rhat_receive[i]=plusz;
-			    rhat_receive[i].Rotate(receive_angle,vrotate);
+			    model_data.rhat_receive[i]=plusz;
+			    model_data.rhat_receive[i].Rotate(receive_angle,vrotate);
 
 			}
 			else {
 
 			    // Straight-line approximation if ray tracing is disabled
-			    rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
-			    rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
-			    rhat[i].SetZ(geom.station_depths[i]-data.vdepth[i][idepth]);
+			    model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			    model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			    model_data.rhat_launch[i].SetZ(geom.station_depths[i]-model_data.vdepth[i][idepth]);
 
-			    rhat_receive[i].SetX(rhat[i][0]);
-			    rhat_receive[i].SetY(rhat[i][1]);
-			    rhat_receive[i].SetZ(rhat[i][2]);
+			    model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+			    model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+			    model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
 			}
 
 			// Normalize and sanity check
-			if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
-			    cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
+			if (model_data.rhat_launch[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "rhat[i] mag is " << model_data.rhat_launch[i].Mag() << "\n";
 			}
-			rhat[i].SetMag(1.);
+			model_data.rhat_launch[i].SetMag(1.);
 
-			if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
-			    cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
+			if (model_data.rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "model_data.rhat_receive[i] mag is " << model_data.rhat_receive[i].Mag() << "\n";
 			}
-			rhat_receive[i].SetMag(1.);
+			model_data.rhat_receive[i].SetMag(1.);
 
 		    }
 		    else {
@@ -1678,161 +1345,1130 @@ int main(int argc, char** argv) {
 			// If no ray solution was found, fall back to simple straight-line
 			// source-to-station geometry.
 			// ----------------------------------------------------------------
-			rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
-			rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
-			rhat[i].SetZ(geom.station_depths[i]-data.vdepth[i][idepth]);
+			model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			model_data.rhat_launch[i].SetZ(geom.station_depths[i]-model_data.vdepth[i][idepth]);
 
-			rhat_receive[i].SetX(rhat[i][0]);
-			rhat_receive[i].SetY(rhat[i][1]);
-			rhat_receive[i].SetZ(rhat[i][2]);
+			model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+			model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+			model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
 		    }
 
 		    // Store launch and receive polar angles (degrees)
-		    data.vreceiveangle[i].push_back(rhat_receive[i].Theta()*DEGRAD);
-		    data.vlaunchangle[i].push_back(rhat[i].Theta()*DEGRAD);
+		    model_data.vreceiveangle[i].push_back(model_data.rhat_receive[i].Theta()*DEGRAD);
+		    model_data.vlaunchangle[i].push_back(model_data.rhat_launch[i].Theta()*DEGRAD);
 
 		    // Final normalization / safety checks
-		    if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
-			cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
+		    if (model_data.rhat_launch[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "rhat[i] mag is " << model_data.rhat_launch[i].Mag() << "\n";
 		    }
 
-		    rhat[i].SetMag(1.);
+		    model_data.rhat_launch[i].SetMag(1.);
 
-		    if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
-			cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
+		    if (model_data.rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "model_data.rhat_receive[i] mag is " << model_data.rhat_receive[i].Mag() << "\n";
 		    }
 
-		    rhat_receive[i].SetMag(1.);
+		    model_data.rhat_receive[i].SetMag(1.);
 		}
+        
+        // MACHTAY LOOK HERE
+        // Test if we can just look at end points
+        // Get list of everything we'll be cutting out by just using end points
+        // Check this works by comparing psi vs depth in both cases with residual vs original
+        for (int idepth=0;idepth<model_data.vdepth[i].size();idepth++) {
+          if (idepth == 0 or idepth == model_data.vdepth[i].size()-1) {
+
+            // Reduced 2D geometry for ray tracing:
+            // x = horizontal separation, z = depth
+            double posstation[2];
+            posstation[0]=sqrt(pow(geom.station_coords[i][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[i][1]-geom.pulser_coords[1],2));
+            posstation[1]=geom.station_depths[i];
+            double pospulser[2];
+            pospulser[0]=0.;
+            pospulser[1]=model_data.vdepth[i][idepth];
+
+            // Full 3D pulser position, useful for later geometric interpretation
+            TVector3 pospulser3D;
+            pospulser3D.SetX(geom.pulser_coords[0]);
+            pospulser3D.SetY(geom.pulser_coords[1]);
+            pospulser3D.SetZ(model_data.vdepth[i][idepth]);
+
+            // 3D vector from pulser to station
+            geom.pulsertostation[i][0]=(geom.station_coords[i][0]-geom.pulser_coords[0]);
+            geom.pulsertostation[i][1]=(geom.station_coords[i][1]-geom.pulser_coords[1]);
+            geom.pulsertostation[i][2]=geom.station_depths[i]-model_data.vdepth[i][idepth];
+
+            // Legacy / diagnostic "special" geometry, based on station 0 and the first pulser depth
+            double atten_special;
+            double pospulser_special[2];
+            pospulser_special[0]=0.;
+            pospulser_special[1]=model_data.vdepth[0][0];
+            double posstation_special[2];
+            posstation_special[0]=sqrt(pow(geom.station_coords[0][0]-geom.pulser_coords[0],2)+pow(geom.station_coords[0][1]-geom.pulser_coords[1],2));
+            posstation_special[1]=geom.station_depths[0];
+
+            // Ray-tracing endpoints
+            double x0=0;
+            double z0=pospulser[1];
+            double x1=posstation[0];
+            double z1=posstation[1];
+
+	    // MACHTAY look here:
+	    const auto ray_before = clock::now(); 
+            // Solve ray-tracing problem for this pulser depth and station
+            double *getresults=IceRayTracing(x0,z0,x1,z1);
+
+            double lvalue;
+            vector<double> res;     // path x-coordinates along the ray
+            vector<double> zs;      // path z-coordinates along the ray
+            double launch_angle;
+            double receive_angle;
+            double *paramsd;
+            double *paramsra;
+            double *paramsre;
+
+            // Store outputs from the ray tracer
+            model_data.voutput6[i].push_back(getresults[6]);
+            model_data.voutput7[i].push_back(getresults[7]);
+            model_data.voutput8[i].push_back(getresults[8]);
+
+	    const sec overhead_duration = clock::now() - overhead_before;
+            overhead += static_cast<double>( overhead_duration.count() );
+            // ------------------------------------------------------------
+            // Determine which ray type exists and build the full ray path
+            // ------------------------------------------------------------
+	    // MACHTAY let's measure the time to do raytracing
+//	    const auto ray_before = clock::now(); 
+            if (getresults[6]!=-1000) {
+                // Direct ray solution
+                paramsd=GetDirectRayPar(z0,x1,z1);
+                launch_angle=paramsd[1]/DEGRAD;
+                receive_angle=paramsd[0]/DEGRAD;
+                GetFullDirectRayPath(z0, x1, z1, paramsd[3], res, zs);
+            }
+            else if (getresults[8]!=1000) {
+
+                // Refracted ray solution
+                paramsre=GetReflectedRayPar(z0, x1 ,z1);
+                double LangR=paramsre[1];
+                double RangR=paramsre[0];
+                paramsra=GetRefractedRayPar(z0, x1 ,z1,LangR,RangR);
+                launch_angle=paramsra[1]/DEGRAD;
+
+                receive_angle=paramsra[0]/DEGRAD;
+                GetFullRefractedRayPath(z0, x1, z1, paramsra[7], paramsra[3], res, zs);
+
+            }
+            else if (getresults[7]!=1000) {
+
+                // Reflected ray solution
+                paramsre=GetReflectedRayPar(z0, x1 ,z1);
+                double LangR=paramsre[1];
+                double RangR=paramsre[0];
+                launch_angle=paramsre[1]/DEGRAD;
+                receive_angle=paramsre[0]/DEGRAD;
+                GetFullReflectedRayPath(z0, x1, z1, LangR, res, zs);
+            }
+	    const sec ray_duration = clock::now() - ray_before;
+            ray_time += static_cast<double>( ray_duration.count() );
+
+
+            // Running amplitude attenuation factor along the ray
+            double atten=1.;
+
+            // Frequency-dependent attenuation starts at unity for all frequencies
+            vattens[i][idepth].clear();
+            for (int ifreq=0;ifreq<NFREQ;ifreq++) {
+                vattens[i][idepth].push_back(1.);
+            }
+
+            // Running path-length and birefringent phase accumulators
+            double sumlength=0.;
+            double sumphase=0.;
+
+            // Proceed only if a usable ray type exists
+            if (getresults[6]!=-1000 || getresults[8]!=-1000 || getresults[7]!=0) {
+
+                // Horizontal unit vector toward the station.
+                // Used to embed the 2D ray-tracing solution back into 3D.
+                TVector3 yhat(geom.station_coords[i][0]-geom.pulser_coords[0],
+                geom.station_coords[i][1]-geom.pulser_coords[1],
+                0.);
+                if (yhat.Mag()<HOWSMALLISTOOSMALL)
+                cout << "yhat mag is " << yhat.Mag() << "\n";
+                yhat.SetMag(1.);
+
+                double angle_yhat=atan2(yhat[1],yhat[0]);
+
+
+                vector<double> nvec_thisstep;
+                nvec_thisstep.resize(3);
+
+                // Principal axis at the start of the path
+			nvec_thisstep[0]=ice.gn1->Eval(zs[0]);
+			nvec_thisstep[1]=ice.gn2->Eval(zs[0]);
+			nvec_thisstep[2]=ice.gn3->Eval(zs[0]);
+
+			TVector3 rhat_thisstep;
+
+			// First estimate of local ray direction from the first path segment
+			rhat_thisstep[0]=-1.*(res[UZAIRSTEP]-res[0])*yhat[0];
+			rhat_thisstep[1]=-1.*(res[UZAIRSTEP]-res[0])*yhat[1];
+			rhat_thisstep[2]=-1.*(zs[UZAIRSTEP]-zs[0]);
+
+			if (rhat_thisstep.Mag()<1.E-8){
+			    cout << "before calling getDeltaN at place 1, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+			}
+
+			// Solve local birefringence eigenvalues and eigenvectors for this propagation direction
+			double deltan_alongpath=getDeltaN(cfg.BIAXIAL,nvec_thisstep,rhat_thisstep,geom.angle_iceflow,n_e1,n_e2,p_e1,p_e2);
+
+
+			if (p_e2.Mag()<HOWSMALLISTOOSMALL)
+			cout << "1, p_e2 is " << p_e2.Mag();
+
+			// Integral of (+/- delta n)*ds along the ray
+			double deltantimeslength_alongpath=0.;
+
+			// Keep track of previous eigenvectors / flipping state
+			TVector3 p_e1_previous=p_e1;
+			TVector3 p_e2_previous=p_e2;
+			double notflipped_previous=1.;
+			double notflipped_atend=1.;
+			double theta_e1_start=0.;
+			double notflipped=1.;
+
+			// --------------------------------------------------------
+			// Step along the traced ray path in chunks of UZAIRSTEP
+			// --------------------------------------------------------
+			// MACHTAY time this loop
+
+			const auto uzair_before = clock::now(); 
+			for (int istep=UZAIRSTEP;istep<res.size();istep+=UZAIRSTEP) {
+
+			    nvec_thisstep.resize(3);
+
+			    // Refractive indices at this path point
+			const auto eval_before = clock::now(); 
+			    nvec_thisstep[0]=ice.gn1->Eval(zs[istep]);
+			    nvec_thisstep[1]=ice.gn2->Eval(zs[istep]);
+			    nvec_thisstep[2]=ice.gn3->Eval(zs[istep]);
+			const sec eval_duration = clock::now() - eval_before;
+			eval_time += static_cast<double>( eval_duration.count() );
+
+
+			    if (istep>0) {
+
+				// Local propagation direction reconstructed from the discrete path
+				rhat_thisstep[0]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[0];
+				rhat_thisstep[1]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[1];
+				rhat_thisstep[2]=-1.*(zs[istep]-zs[istep-UZAIRSTEP]);
+
+				// Debugging / illustration printout for A1 near -1000 m
+				if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.)) {
+				    if (istep==50) {
+					cout << "receive angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "recieve vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
+					TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
+					if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
+					cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
+					v3dtemp.SetMag(0.075);
+					cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
+				    }
+				    if (abs((double)(istep-(int)res.size()))<=50) {
+
+					cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "launch vector is " << res[istep-50]-res[istep] << "\t" << zs[istep-50]-zs[istep] << "\n";
+					TVector3 v3dtemp(-1.*(zs[istep-50.]-zs[istep])/500.,0.,(res[istep-50.]-res[istep])/500.);
+					if (v3dtemp.Mag()<HOWSMALLISTOOSMALL)
+					cout << "v3dtemp is " << v3dtemp.Mag() << "\n";
+					v3dtemp.SetMag(0.075);
+					cout << "polarization vector is " << v3dtemp[0] << "\t" << v3dtemp[2] << "\n";
+				    }
+				    if (istep%50==0)
+				    cout << "\\draw[very thick] (" << res[istep-50]/1000. << ",0.," << zs[istep-50]/1000. << ") -- (" << res[istep]/1000. << ",0.," << zs[istep]/1000. << ");\n";
+
+
+				}
+
+				// Physical segment length of this path step
+				double length=rhat_thisstep.Mag();
+
+				if (rhat_thisstep.Mag()<HOWSMALLISTOOSMALL)
+				cout << "rhat_thisstep mag is " << rhat_thisstep.Mag() << "\n";
+
+				// Convert to unit direction for angular calculations
+				rhat_thisstep.SetMag(1.);
+
+				// Attenuation length at this depth for the chosen frequency
+				double atten_length=GetIceAttenuationLength(zs[istep], freq/1.E9);
+
+				// Amplitude attenuation accumulated along the path
+				atten*=exp(-1.*length/atten_length);
+
+				if (rhat_thisstep.Mag()<1.E-8){
+				    cout << "before calling getDeltaN at place 2, rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+				}
+				// Update local birefringence splitting and eigenvectors/eigenvalues
+				deltan_alongpath=getDeltaN(cfg.BIAXIAL,nvec_thisstep,rhat_thisstep,geom.angle_iceflow,n_e1,n_e2,p_e1,p_e2);
+
+				if (p_e2.Mag()<HOWSMALLISTOOSMALL)
+				cout << "2, p_e2 is " << p_e2.Mag() << "\n";
+
+				// Save previous eigenvectors in case continuity tracking is needed
+				p_e1_previous=p_e1;
+				p_e2_previous=p_e2;
+
+				// Local dielectric tensor diagonal entries in the principal basis
+				TVector3 epsilon_thisstep;
+
+				epsilon_thisstep[0]=nvec_thisstep[0]*nvec_thisstep[0];
+				epsilon_thisstep[1]=nvec_thisstep[1]*nvec_thisstep[1];
+				epsilon_thisstep[2]=nvec_thisstep[2]*nvec_thisstep[2];
+
+
+				// Convert D eigenvectors to electric-field directions
+				TVector3 E_e1=rotateD(epsilon_thisstep,geom.angle_iceflow,p_e1);
+				TVector3 E_e2=rotateD(epsilon_thisstep,geom.angle_iceflow,p_e2);
+
+				// ----------------------------------------------------
+				// At the final step (TX side in this path convention),
+				// compute transmitter-side polarization / beam quantities
+				// ----------------------------------------------------
+				if (abs((double)(istep-(int)res.size()))<=UZAIRSTEP) {
+
+
+				    if (i==5 && idepth==model_data.g_idepth[i]->Eval(-400.))
+				    cout << "launch angle is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+
+				    double theta_e1,theta_e2;
+				    double thetaE_e1,thetaE_e2;
+				    double theta_e1_Sclock,theta_e2_Sclock;
+				    double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				    TVector3 Shat_e1,Shat_e2;
+
+				    double E_e1_thetacomponent,E_e2_thetacomponent;
+				    double E_e1_phicomponent,E_e2_phicomponent;
+
+				    // Decompose the eigenmodes into the chosen TX cross-pol frame
+				    getManyAnglesontheClock(cfg.BIAXIAL,cfg.CROSSPOLANGLE_TX,
+					rhat_thisstep,
+					p_e1,p_e2,E_e1,E_e2,
+					theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+					theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+					Shat_e1,Shat_e2,
+					E_e1_thetacomponent,E_e2_thetacomponent,
+					E_e1_phicomponent,E_e2_phicomponent);
+
+				    // Store angle between each Poynting vector and propagation direction
+				    model_data.vangle_Shat_e1_khat[i].push_back(acos(Shat_e1.Dot(rhat_thisstep)/Shat_e1.Mag()/rhat_thisstep.Mag())*DEGRAD);
+				    model_data.vangle_Shat_e2_khat[i].push_back(acos(Shat_e2.Dot(rhat_thisstep)/Shat_e2.Mag()/rhat_thisstep.Mag())*DEGRAD);
+
+				    // Special ordering swap for ARIANNA in the biaxial case
+				    if (i==5 && cfg.BIAXIAL==1) {
+					switchThem(thetaE_e1_Sclock,thetaE_e2_Sclock);
+					switchThem(theta_e1_Sclock,theta_e2_Sclock);
+					switchThem(theta_e1,theta_e2);
+					switchThem(thetaE_e1,thetaE_e2);
+				    }
+
+				    // Verbose diagnostics for selected reference depths
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
+
+					cout << "At Tx:\n";
+					cout << "A" << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
+
+					cout << "angle of yhat is " << angle_yhat << "\n";
+
+					cout << "p_e1 is " << p_e1[0] << "\t" << p_e1[1] << "\t" << p_e1[2] << "\n";
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "p_e2 is " << p_e2[0] << "\t" << p_e2[1] << "\t" << p_e2[2] << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+					cout << "dot product is " << p_e1[0]*p_e2[0]+p_e1[1]*p_e2[1]+p_e1[2]*p_e2[2] << "\n";
+					cout << "epsilon is " << epsilon_thisstep[0] << "\t" << epsilon_thisstep[1] << "\t" << epsilon_thisstep[2] << "\n";
+					cout << "E_e1 is " << E_e1[0] << "\t" << E_e1[1] << "\t" << E_e1[2] << "\n";
+					cout << "mag of E_e1 is " << E_e1.Mag() << "\n";
+					cout << "E_e2 is " << E_e2[0] << "\t" << E_e2[1] << "\t" << E_e2[2] << "\n";
+					cout << "mag of E_e2 is " << E_e2.Mag() << "\n";
+					cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
+					cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
+					cout << "dot product is " << E_e1[0]*E_e2[0]+E_e1[1]*E_e2[1]+E_e1[2]*E_e2[2] << "\n";
+					cout << "theta_e1, theta_e2 are " << theta_e1 << "\t" << theta_e2 << "\n";
+					cout << "diff is " << (theta_e1-theta_e2)*DEGRAD << "\n";
+					cout << "thetaE_e1, thetaE_e2 are " << thetaE_e1 << "\t" << thetaE_e2 << "\n";
+					cout << "diff is " << (thetaE_e1-thetaE_e2)*DEGRAD << "\n";
+					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
+					cout << "diff is " << (thetaE_e1_Sclock-thetaE_e2_Sclock)*DEGRAD << "\n";
+					cout << "depth is " << model_data.vdepth[i][idepth] << "\n";
+					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+
+					TVector3 E_e1_temp=E_e1;
+					TVector3 E_e2_temp=E_e2;
+					TVector3 Shat_e1_temp=Shat_e1;
+					TVector3 Shat_e2_temp=Shat_e2;
+					TVector3 rhat_thisstep_temp=rhat_thisstep;
+
+					// Total E field from adding the two eigenmode contributions
+					TVector3 E_total_temp=E_e1_temp+E_e2_temp;
+
+					TVector3 zaxis(0.,0.,1.);
+
+					// Rotate so the line of sight lies in the plane of the page
+					E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_total_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					// Rescale for prettier printing / drawing
+					double scalefactor=0.2/E_total_temp.Mag();
+					E_total_temp=scalefactor*E_total_temp;
+					E_e1_temp=scalefactor*E_e1_temp;
+					E_e2_temp=scalefactor*E_e2_temp;
+
+					Shat_e1_temp=scalefactor*Shat_e1_temp;
+					Shat_e2_temp=scalefactor*Shat_e2_temp;
+					rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
+
+					cout << "These are rotated so the line of sight from pulser to station is in the plane of the page.\n";
+					cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
+					cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
+					cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
+					cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
+
+					cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
+					cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
+					cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
+
+					cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
+					cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
+					cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
+
+					TVector3 D_e1_temp=cos(theta_e1)*p_e1;
+					TVector3 D_e2_temp=cos(theta_e2)*p_e2;
+
+					D_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					D_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+
+					cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
+					cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
+					cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
+					cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
+				    }
+
+				    // Store orthogonality / alignment diagnostics
+				    model_data.vdotShats_tx[i].push_back(Shat_e1.Dot(Shat_e2)/Shat_e1.Mag()/Shat_e2.Mag());
+				    model_data.vdotEhats_tx[i].push_back(E_e1.Dot(E_e2)/E_e1.Mag()/E_e2.Mag());
+				    model_data.vdotDhats_tx[i].push_back(p_e1.Dot(p_e2)/p_e1.Mag()/p_e2.Mag());
+
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+					cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
+				    }
+
+				    // Beam factors at the transmitter from the Poynting-vector polar angle
+				    double beam_tx_e1=sin(Shat_e1.Theta());
+				    double beam_tx_e2=sin(Shat_e2.Theta());
+
+				    model_data.vtxdepth_beam1[i].push_back(beam_tx_e1);
+				    model_data.vtxdepth_beam2[i].push_back(beam_tx_e2);
+
+				    // Store TX angular diagnostics
+				    model_data.vtxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vtxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    model_data.vtxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    model_data.vtxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+
+				    model_data.vtxdepthE_theta1[i].push_back(thetaE_e1*DEGRAD);
+				    model_data.vtxdepthE_theta2[i].push_back(thetaE_e2*DEGRAD);
+
+
+				    model_data.vtxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    model_data.vtxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+
+				    // Angle between E and D for each eigenmode
+				    model_data.vtxdepth_dispersion1[i].push_back(acos(E_e1.Dot(p_e1)/E_e1.Mag()/p_e1.Mag())*DEGRAD);
+				    model_data.vtxdepth_dispersion2[i].push_back(acos(E_e2.Dot(p_e2)/E_e2.Mag()/p_e2.Mag())*DEGRAD);
+
+				    // Convert S-clock angles into epsilon parameters
+				    double epsilon1_tx=0.;
+				    double epsilon2_tx=0.;
+				    thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
+				    epsilon1_tx,epsilon2_tx);
+
+				    if (epsilon2_tx>PI/2.){
+					epsilon2_tx-=PI;
+				    }
+
+				    model_data.vepsilon1_tx[i].push_back(epsilon1_tx*DEGRAD);
+				    model_data.vepsilon2_tx[i].push_back(epsilon2_tx*DEGRAD);
+
+				    model_data.vdiffepsilon_tx[i].push_back((epsilon2_tx-epsilon1_tx)*DEGRAD);
+
+				    // Store attenuation-only and attenuation×beam estimates at the receiver
+				    model_data.vrxdepth_atten[i].push_back(VOLTAGENORM*atten);
+				    model_data.vrxdepth_atten_beam[i].push_back(VOLTAGENORM*model_data.vrxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*atten);
+				    model_data.vrxdepth_atten_power[i].push_back(VOLTAGENORM*VOLTAGENORM*atten*atten);
+				    model_data.vrxdepth_atten_beam_power[i].push_back(VOLTAGENORM*VOLTAGENORM*model_data.vrxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*atten*atten);
+				    
+				    notflipped_atend=notflipped;
+
+				}
+
+				// ----------------------------------------------------
+				// At the first step (RX side in this convention),
+				// compute receiver-side polarization / beam quantities
+				// ----------------------------------------------------
+				if (istep==UZAIRSTEP) {
+
+				    double theta_e1,theta_e2;
+				    double thetaE_e1,thetaE_e2;
+				    double theta_e1_Sclock,theta_e2_Sclock;
+				    double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				    TVector3 Shat_e1,Shat_e2;
+
+				    double E_e1_thetacomponent,E_e2_thetacomponent;
+				    double E_e1_phicomponent,E_e2_phicomponent;
+
+				    // Decompose eigenmodes into the chosen RX cross-pol basis
+				    getManyAnglesontheClock(cfg.BIAXIAL,cfg.CROSSPOLANGLE_RX,
+					rhat_thisstep,
+					p_e1,p_e2,E_e1,E_e2,
+					theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+					theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+					Shat_e1,Shat_e2,
+					E_e1_thetacomponent,E_e2_thetacomponent,
+					E_e1_phicomponent,E_e2_phicomponent);
+
+				    // Reference angle used to determine whether an eigenvector "flips"
+				    theta_e1_start=theta_e1;
+
+				    // Debug diagnostics at selected reference depths
+				    if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+				    i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
+					cout << "At Rx:\n";
+					cout << "A" << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
+					cout << "thetas on the Sclock are " << thetaE_e1_Sclock*DEGRAD << "\t" << thetaE_e2_Sclock*DEGRAD << "\n";
+					cout << "depth is " << model_data.vdepth[i][idepth] << "\n";
+
+					cout << "theta of rhat_thisstep is " << rhat_thisstep.Theta()*DEGRAD << "\n";
+					cout << "rhat_thisstep is " << rhat_thisstep[0] << "\t" << rhat_thisstep[1] << "\t" << rhat_thisstep[2] << "\n";
+					cout << "This points from pulser to station: " << geom.station_coords[i][0]-geom.pulser_coords[0] << "\t" << geom.station_coords[i][1]-geom.pulser_coords[1] << "\t" << geom.station_depths[i]-model_data.vdepth[i][idepth] << "\n";
+
+					cout << "Shat_e1 is " << Shat_e1[0] << "\t" << Shat_e1[1] << "\t" << Shat_e1[2] << "\n";
+					cout << "Shat_e2 is " << Shat_e2[0] << "\t" << Shat_e2[1] << "\t" << Shat_e2[2] << "\n";
+					cout << "theta_e1_Sclock, theta_e2_Sclock are " << theta_e1_Sclock << "\t" << theta_e2_Sclock << "\n";
+					TVector3 E_e1_temp=E_e1;
+
+					TVector3 E_e2_temp=E_e2;
+
+					TVector3 Shat_e1_temp=Shat_e1;
+					TVector3 Shat_e2_temp=Shat_e2;
+					TVector3 rhat_thisstep_temp=rhat_thisstep;
+
+					TVector3 E_total_temp=E_e1_temp+E_e2_temp;
+
+					TVector3 zaxis(0.,0.,1.);
+
+					E_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					E_total_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					Shat_e1_temp.Rotate(-1.*angle_yhat,zaxis);
+					Shat_e2_temp.Rotate(-1.*angle_yhat,zaxis);
+					rhat_thisstep_temp.Rotate(-1.*angle_yhat,zaxis);
+
+					double scalefactor=0.2/E_total_temp.Mag();
+					E_total_temp=scalefactor*E_total_temp;
+					E_e1_temp=scalefactor*E_e1_temp;
+					E_e2_temp=scalefactor*E_e2_temp;
+
+					Shat_e1_temp=scalefactor*Shat_e1_temp;
+					Shat_e2_temp=scalefactor*Shat_e2_temp;
+					rhat_thisstep_temp=scalefactor*rhat_thisstep_temp;
+
+					cout << "E_e1_temp is " << E_e1_temp[0] << "\t" << E_e1_temp[1] << "\t" << E_e1_temp[2] << "\n";
+					cout << "mag of E_e1_temp is " << E_e1_temp.Mag() << "\n";
+					cout << "E_e2_temp is " << E_e2_temp[0] << "\t" << E_e2_temp[1] << "\t" << E_e2_temp[2] << "\n";
+					cout << "mag of E_e2_temp is " << E_e2_temp.Mag() << "\n";
+					cout << "E_total_temp is " << E_total_temp[0] << "\t" << E_total_temp[1] << "\t" << E_total_temp[2] << "\n";
+					cout << "theta component of e1: " << E_e1_thetacomponent << "\t theta component of e2: " << E_e2_thetacomponent << "\n";
+					cout << "phi component of e1: " << E_e1_phicomponent << "\t phi component of e2: " << E_e2_phicomponent << "\n";
+
+					cout << "Shat_e1_temp is " << Shat_e1_temp[0] << "\t" << Shat_e1_temp[1] << "\t" << Shat_e1_temp[2] << "\n";
+					cout << "Shat_e2_temp is " << Shat_e2_temp[0] << "\t" << Shat_e2_temp[1] << "\t" << Shat_e2_temp[2] << "\n";
+					cout << "rhat_thisstep_temp is " << rhat_thisstep_temp[0] << "\t" << rhat_thisstep_temp[1] << "\t" << rhat_thisstep_temp[2] << "\n";
+
+					cout << "mag of E_total_temp is " << E_total_temp.Mag() << "\t" << 1/sqrt(E_total_temp.Mag()) << "\n";
+					cout << "polarization angle is " << DEGRAD*atan(E_total_temp[1]/sqrt(E_total_temp[0]*E_total_temp[0]+E_total_temp[2]*E_total_temp[2])) << "\n";
+
+					TVector3 D_e1_temp=cos(theta_e1)*p_e1;
+					TVector3 D_e2_temp=cos(theta_e2)*p_e2;
+
+					cout << "mag of p_e1 is " << p_e1.Mag() << "\n";
+					cout << "mag of p_e2 is " << p_e2.Mag() << "\n";
+
+					cout << "D_e1_temp is " << D_e1_temp[0] << "\t" << D_e1_temp[1] << "\t" << D_e1_temp[2] << "\n";
+					cout << "D_e2_temp is " << D_e2_temp[0] << "\t" << D_e2_temp[1] << "\t" << D_e2_temp[2] << "\n";
+					cout << "mag of D_e1_temp is " << D_e1_temp.Mag() << "\n";
+					cout << "mag of D_e2_temp is " << D_e2_temp.Mag() << "\n";
+				    }
+
+				    // Store RX-side angular diagnostics
+				    model_data.vrxdepth_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vrxdepth_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    // Note: these two lines store theta_e1/theta_e2 rather than thetaE_e1/thetaE_e2.
+				    // That may be intentional or may deserve a later check.
+				    model_data.vrxdepthE_theta1[i].push_back(theta_e1*DEGRAD);
+				    model_data.vrxdepthE_theta2[i].push_back(theta_e2*DEGRAD);
+
+				    model_data.vrxdepth_theta1_Sclock[i].push_back(theta_e1_Sclock*DEGRAD);
+				    model_data.vrxdepth_theta2_Sclock[i].push_back(theta_e2_Sclock*DEGRAD);
+
+
+				    model_data.vrxdepthE_theta1_Sclock[i].push_back(thetaE_e1_Sclock*DEGRAD);
+				    model_data.vrxdepthE_theta2_Sclock[i].push_back(thetaE_e2_Sclock*DEGRAD);
+
+				    // Convert RX S-clock angles into epsilon parameters
+				    double epsilon1_rx=0.;
+				    double epsilon2_rx=0.;
+
+				    thetastoEpsilons(thetaE_e1_Sclock,thetaE_e2_Sclock,
+					epsilon1_rx,epsilon2_rx);
+
+				    model_data.vepsilon1_rx[i].push_back(epsilon1_rx*DEGRAD);
+				    model_data.vepsilon2_rx[i].push_back(epsilon2_rx*DEGRAD);
+				    model_data.vdiffepsilon_rx[i].push_back((epsilon2_rx-epsilon1_rx)*DEGRAD);
+
+				    // Beam factors at the receiver
+				    double beam_rx_e1=sin(Shat_e1.Theta());
+				    double beam_rx_e2=sin(Shat_e2.Theta());
+
+				    model_data.vrxdepth_beam1[i].push_back(beam_rx_e1);
+				    model_data.vrxdepth_beam2[i].push_back(beam_rx_e2);
+
+				    // Build an orthonormal receiver polarization basis:
+				    //   Pr2 perpendicular to Shat_e1 and +z
+				    //   Pr1 perpendicular to both Pr2 and Shat_e1
+				    TVector3 plusz(0.,0.,1.);
+				    model_data.Pr2[i]=Shat_e1.Cross(plusz);
+				    if (model_data.Pr2[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "model_data.Pr2[i] is " << model_data.Pr2[i].Mag() << "\n";
+				    }
+				    model_data.Pr2[i].SetMag(1.);
+				    model_data.Pr1[i]=model_data.Pr2[i].Cross(Shat_e1);
+				    if (model_data.Pr1[i].Mag()<HOWSMALLISTOOSMALL){
+					cout << "model_data.Pr1[i] is " << model_data.Pr1[i].Mag() << "\n";
+				    }
+				    model_data.Pr1[i].SetMag(1.);
+				}
+
+				// ----------------------------------------------------
+				// Update the frequency-dependent attenuation spectrum
+				// along this path segment
+				// ----------------------------------------------------
+				for (int ifreq=0;ifreq<NFREQ;ifreq++) {
+
+
+				    double this_atten_length=GetIceAttenuationLength(zs[istep], cfg.vfreqs[ifreq]/1.E9);
+
+				    // Power-like attenuation: two exponential factors
+				    vattens[i][idepth][ifreq] = vattens[i][idepth][ifreq]*exp(-1.*length/this_atten_length)*exp(-1.*length/this_atten_length);
+				}
+
+				// Recompute angular decomposition in the "neutral" clock convention
+				double theta_e1,theta_e2;
+				double thetaE_e1,thetaE_e2;
+				double theta_e1_Sclock,theta_e2_Sclock;
+				double thetaE_e1_Sclock,thetaE_e2_Sclock;
+
+				TVector3 Shat_e1,Shat_e2;
+
+				double E_e1_thetacomponent,E_e2_thetacomponent;
+				double E_e1_phicomponent,E_e2_phicomponent;
+				getManyAnglesontheClock(cfg.BIAXIAL,0.,
+				    rhat_thisstep,
+				    p_e1,p_e2,E_e1,E_e2,
+				    theta_e1,theta_e2,thetaE_e1,thetaE_e2,
+				    theta_e1_Sclock,theta_e2_Sclock,thetaE_e1_Sclock,thetaE_e2_Sclock,
+				    Shat_e1,Shat_e2,
+				    E_e1_thetacomponent,E_e2_thetacomponent,
+				    E_e1_phicomponent,E_e2_phicomponent);
+
+				// Determine whether the eigenvector basis has effectively flipped
+				// relative to the starting RX-side convention
+				notflipped=Flipped(theta_e1, theta_e1_start);
+
+				// Accumulate signed birefringence phase integral
+				deltantimeslength_alongpath+=deltan_alongpath*length*notflipped;
+				notflipped_previous=notflipped;
+
+				// Accumulate geometric path length
+				sumlength+=length;
+
+				// Store detailed along-path diagnostics only for a special pulser depth
+				if (idepth==(int)(model_data.g_idepth[i]->Eval(geom.depth_special))) {
+
+				    vtheta1_alongpath[i].push_back(theta_e1*DEGRAD);
+				    vtheta2_alongpath[i].push_back(theta_e2*DEGRAD);
+				    vthetape1_alongpath[i].push_back(p_e1.Theta()*DEGRAD);
+				    vthetape2_alongpath[i].push_back(p_e2.Theta()*DEGRAD);
+				    vphipe1_alongpath[i].push_back(p_e1.Phi()*DEGRAD);
+				    vphipe2_alongpath[i].push_back(p_e2.Phi()*DEGRAD);
+				    vnotflipped_alongpath[i].push_back(notflipped);
+				    vdeltan[i].push_back(deltan_alongpath);
+				    vdepth_step[i].push_back(zs[istep]);
+				    model_data.vistep[i].push_back((double)istep);
+				    vlengths[i].push_back(sumlength);
+				    vattenlengths[i].push_back(atten_length);
+				}
+			    }
+			    else {                        
+				// Fallback for the first step if needed:
+				// use the previously stored launch-direction unit vector.
+				rhat_thisstep=model_data.rhat_launch[i];
+			    }
+			}
+			const sec uzair_duration = clock::now() - uzair_before;
+			uzair_time += static_cast<double>( uzair_duration.count() );
+
+
+			// ----------------------------------------------------------------
+			// Convert accumulated birefringence phase integral into a phase.
+			//
+			// deltantimeslength_alongpath has units of (delta n) * length.
+			// Multiplying by (pi / c) * f converts this into the phase used
+			// in the two-mode interference terms below.
+			// ----------------------------------------------------------------
+			sumphase=deltantimeslength_alongpath*PI/TMath::C()*freq;
+
+			// Receiver-side S-clock angles for the two eigenmodes
+			double theta1_Sclock_atrx,theta2_Sclock_atrx;
+
+
+			// ----------------------------------------------------------------
+			// Build the contributions of the two birefringent eigenmodes
+			// to two receiver polarization channels (r1 and r2).
+			//
+			// Interpretation:
+			//   - vV*_r1 / vV*_r2 are voltage-like projected amplitudes
+			//   - vE*_r1 / vE*_r2 are field-like projected amplitudes
+			//
+			// Each contribution includes:
+			//   - attenuation along the path
+			//   - TX projection into a given eigenmode
+			//   - RX projection into channel r1 or r2
+			//   - beam-pattern factors at TX and RX (for voltages)
+			// ----------------------------------------------------------------
+
+			// Mode 1 contribution into receiver channel r1
+			theta1_Sclock_atrx=model_data.vrxdepthE_theta1_Sclock[i][idepth];
+			theta2_Sclock_atrx=model_data.vrxdepthE_theta2_Sclock[i][idepth];
+
+
+			model_data.vV1_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]);
+			model_data.vE1_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*cos(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]);
+
+			// Mode 2 contribution into receiver channel r1
+			model_data.vV2_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]);
+			model_data.vE2_r1[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*cos(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]);
+
+			// LPDA-like projection: remove the component parallel to the beam axis
+			model_data.vV1_r1_lpda[i].push_back(model_data.vV1_r1[i][idepth]*sqrt(1.-model_data.vrxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]));
+			model_data.vV2_r1_lpda[i].push_back(model_data.vV2_r1[i][idepth]*sqrt(1.-model_data.vrxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]));
+
+			// Store quadratic combinations for interference calculations
+			model_data.vV1squared_r1[i].push_back(model_data.vV1_r1[i][idepth]*model_data.vV1_r1[i][idepth]);
+			model_data.vV2squared_r1[i].push_back(model_data.vV2_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
+			model_data.vV1V2_r1[i].push_back(model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
+
+			// Mode 1 contribution into receiver channel r2
+			model_data.vV1_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth]);
+			model_data.vE1_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD)*sin(theta1_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam1[i][idepth]);
+
+			// Mode 2 contribution into receiver channel r2
+			model_data.vV2_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]*model_data.vrxdepth_beam2[i][idepth]);
+			model_data.vE2_r2[i].push_back(model_data.vrxdepth_atten[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD)*sin(theta2_Sclock_atrx/DEGRAD)*model_data.vtxdepth_beam2[i][idepth]);
+
+			// More quadratic combinations for the second receiver channel
+			model_data.vV1squared_r2[i].push_back(model_data.vV1_r2[i][idepth]*model_data.vV1_r2[i][idepth]);
+			model_data.vV2squared_r2[i].push_back(model_data.vV2_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
+			model_data.vV1V2_r2[i].push_back(model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
+
+			// Debug print for a reference pulser depth
+			if (idepth==model_data.g_idepth[i]->Eval(-1000.)){
+			    cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << i << "\t" << model_data.vV1squared_r2[i][idepth] << "\t" << model_data.vV2squared_r2[i][idepth] << "\t" << model_data.vV1V2_r2[i][idepth] << "\n";
+			}
+
+			// Negative cross terms, convenient for expressions written as
+			// A+B-2*sqrt(AB)*sin^2(phi) or equivalent forms
+			model_data.voppositeV1V2_r2[i].push_back(-1.*model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]);
+			model_data.voppositeV1V2_r1[i].push_back(-1.*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]);
+
+
+			// ----------------------------------------------------------------
+			// Build envelope quantities:
+			//   minus envelope = destructive combination
+			//   plus envelope  = constructive combination
+			//
+			// Versions are stored both for voltage-like quantities and
+			// field/Poynting-like quantities.
+			// ----------------------------------------------------------------
+			model_data.venvelope_minus_r1[i].push_back((model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])*(model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth]));
+			model_data.vSenvelope_minus_r1[i].push_back((model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])*(model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth]));
+
+			model_data.venvelope_minus_r1_lpda[i].push_back((model_data.vV1_r1_lpda[i][idepth]-model_data.vV2_r1_lpda[i][idepth])*(model_data.vV1_r1_lpda[i][idepth]-model_data.vV2_r1_lpda[i][idepth]));
+
+			model_data.venvelope_minus_r2[i].push_back((model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])*(model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth]));
+			model_data.vSenvelope_minus_r2[i].push_back((model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])*(model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth]));
+			model_data.venvelope_plus_r1[i].push_back((model_data.vV2_r1[i][idepth]+model_data.vV1_r1[i][idepth])*(model_data.vV1_r1[i][idepth]+model_data.vV2_r1[i][idepth]));
+			model_data.vSenvelope_plus_r1[i].push_back((model_data.vE2_r1[i][idepth]+model_data.vE1_r1[i][idepth])*(model_data.vE1_r1[i][idepth]+model_data.vE2_r1[i][idepth]));
+			model_data.venvelope_plus_r1_lpda[i].push_back((model_data.vV2_r1_lpda[i][idepth]+model_data.vV1_r1_lpda[i][idepth])*(model_data.vV1_r1_lpda[i][idepth]+model_data.vV2_r1_lpda[i][idepth]));
+
+			model_data.venvelope_plus_r2[i].push_back((model_data.vV2_r2[i][idepth]+model_data.vV1_r2[i][idepth])*(model_data.vV1_r2[i][idepth]+model_data.vV2_r2[i][idepth]));
+			model_data.vSenvelope_plus_r2[i].push_back((model_data.vE2_r2[i][idepth]+model_data.vE1_r2[i][idepth])*(model_data.vE1_r2[i][idepth]+model_data.vE2_r2[i][idepth]));
+
+			model_data.vvenvelope_minus_r1[i].push_back(sqrt((model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])*(model_data.vV1_r1[i][idepth]-model_data.vV2_r1[i][idepth])));
+			model_data.vvenvelope_minus_r2[i].push_back(sqrt((model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])*(model_data.vV1_r2[i][idepth]-model_data.vV2_r2[i][idepth])));
+			model_data.vvenvelope_plus_r1[i].push_back(sqrt((model_data.vV2_r1[i][idepth]+model_data.vV1_r1[i][idepth])*(model_data.vV1_r1[i][idepth]+model_data.vV2_r1[i][idepth])));
+			model_data.vvenvelope_plus_r2[i].push_back(sqrt((model_data.vV2_r2[i][idepth]+model_data.vV1_r2[i][idepth])*(model_data.vV1_r2[i][idepth]+model_data.vV2_r2[i][idepth])));
+
+			model_data.vEenvelope_minus_r1[i].push_back(sqrt((model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])*(model_data.vE1_r1[i][idepth]-model_data.vE2_r1[i][idepth])));
+			model_data.vEenvelope_minus_r2[i].push_back(sqrt((model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])*(model_data.vE1_r2[i][idepth]-model_data.vE2_r2[i][idepth])));
+			model_data.vEenvelope_plus_r1[i].push_back(sqrt((model_data.vE2_r1[i][idepth]+model_data.vE1_r1[i][idepth])*(model_data.vE1_r1[i][idepth]+model_data.vE2_r1[i][idepth])));
+			model_data.vEenvelope_plus_r2[i].push_back(sqrt((model_data.vE2_r2[i][idepth]+model_data.vE1_r2[i][idepth])*(model_data.vE1_r2[i][idepth]+model_data.vE2_r2[i][idepth])));
+
+			// ----------------------------------------------------------------
+			// Build a frequency spectrum for this station and pulser depth.
+			//
+			// The phase scales linearly with frequency, so a spectrum is obtained
+			// by re-evaluating the same interference expression at each frequency.
+			// ----------------------------------------------------------------
+			for (int ifreq=0;ifreq<NFREQ;ifreq++) {
+			    double thisfreq=cfg.vfreqs[ifreq];
+			    double thissumphase=sumphase*thisfreq/freq;
+
+			    vspectra[i][idepth].push_back(vattens[i][idepth][ifreq]/model_data.vrxdepth_atten[i][idepth]*(model_data.venvelope_plus_r1[i][idepth]-4*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]*sin(thissumphase)*sin(thissumphase)));
+			    if (i==5 && idepth==model_data.g_idepth[i]->Eval(-1000.))
+			    cout << "i, vattens[i][idepth], model_data.vrxdepth_atten[i][idepth], vspectra are " << i << "\t" << vattens[i][idepth][ifreq] << "\t" << model_data.vrxdepth_atten[i][idepth] << "\t" << vspectra[i][idepth][ifreq] << "\n";
+			}
+
+			// Time delay corresponding to the accumulated phase difference
+			//   sumphase = pi * f * dt
+			// so dt = sumphase / (pi*f)
+			vtimediff[i].push_back(sumphase/(PI)*1./freq*1.E9);
+
+			// Whether the eigenvector tracking ended in the same orientation sign
+			vnotflipped[i].push_back(notflipped_atend);
+
+			// ----------------------------------------------------------------
+			// Final interference-modified power / Poynting-like quantities
+			// for the two receiver channels.
+			// ----------------------------------------------------------------
+			model_data.vpower_r1[i].push_back(model_data.venvelope_plus_r1[i][idepth]-4*model_data.vV1_r1[i][idepth]*model_data.vV2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpoynting_r1[i].push_back(model_data.vSenvelope_plus_r1[i][idepth]-4*model_data.vE1_r1[i][idepth]*model_data.vE2_r1[i][idepth]*sin(sumphase)*sin(sumphase));
+
+			model_data.vpower_r1_lpda[i].push_back(model_data.venvelope_plus_r1_lpda[i][idepth]-4*model_data.vV1_r1_lpda[i][idepth]*model_data.vV2_r1_lpda[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpower_r2[i].push_back(model_data.venvelope_plus_r2[i][idepth]-4*model_data.vV1_r2[i][idepth]*model_data.vV2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+			model_data.vpoynting_r2[i].push_back(model_data.vSenvelope_plus_r2[i][idepth]-4*model_data.vE1_r2[i][idepth]*model_data.vE2_r2[i][idepth]*sin(sumphase)*sin(sumphase));
+
+			// Convert power-like quantities into amplitude-like quantities
+			model_data.vvoltage_r1[i].push_back(sqrt(model_data.vpower_r1[i][idepth]));
+			model_data.vfield_r1[i].push_back(sqrt(model_data.vpoynting_r1[i][idepth]));
+			model_data.vvoltage_r1_lpda[i].push_back(sqrt(model_data.vpower_r1_lpda[i][idepth]));
+			model_data.vvoltage_r2[i].push_back(sqrt(model_data.vpower_r2[i][idepth]));
+			model_data.vfield_r2[i].push_back(sqrt(model_data.vpoynting_r2[i][idepth]));
+
+			// Detailed printout at selected reference depths
+			if (i==0 && idepth==model_data.g_idepth[i]->Eval(-1000.) ||
+			i==5 && idepth==model_data.g_idepth[i]->Eval(-400.)) {
+
+			    cout << "A " << i+1 << ", depth is " << model_data.vdepth[i][idepth] << "\n";
+
+			    cout << "before scalefactors:\n";
+			    cout << "powers are " << model_data.vpower_r1[i][idepth] << "\t" << model_data.vpower_r2[i][idepth] << "\n";
+			    cout << "voltages are " << model_data.vvoltage_r1[i][idepth] << "\t" << model_data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "lpda voltages are " << model_data.vvoltage_r1_lpda[i][idepth] << "\t" << model_data.vvoltage_r2[i][idepth] << "\n";
+
+			    // Scale to a convenient display size
+			    double scalefactor=0.2/sqrt(model_data.vvoltage_r1[i][idepth]*model_data.vvoltage_r1[i][idepth]+model_data.vvoltage_r2[i][idepth]*model_data.vvoltage_r2[i][idepth]);
+
+			    // Common attenuation × beam prefactor
+			    double prefactor=model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth];
+			    cout << "voltage r1 is " << scalefactor*model_data.vvoltage_r1[i][idepth] << "\n";
+			    cout << "x, z components of voltage r1 are " << model_data.vtxdepth_beam1[i][idepth]*scalefactor*model_data.vvoltage_r1[i][idepth] << "\t" << sqrt(1.-model_data.vtxdepth_beam1[i][idepth]*model_data.vtxdepth_beam1[i][idepth])*scalefactor*model_data.vvoltage_r1[i][idepth] << "\n";
+
+			    cout << "voltage r2 is " << scalefactor*model_data.vvoltage_r2[i][idepth] << "\n";
+			    cout << "polarization angle is " << DEGRAD*atan2(model_data.vvoltage_r2[i][idepth],model_data.vvoltage_r1[i][idepth]) << "\n";
+			    cout << "thetas_Sclock_atrx are " << theta1_Sclock_atrx << "\t" << theta2_Sclock_atrx << "\n";
+			    cout << "diff is " << (theta1_Sclock_atrx-theta2_Sclock_atrx) << "\n";
+			    cout << "thetas_Sclock_attx are " << model_data.vtxdepthE_theta1_Sclock[i][idepth] << "\t" << model_data.vtxdepthE_theta2_Sclock[i][idepth] << "\n";
+			    cout << "diff is " << (model_data.vtxdepthE_theta1_Sclock[i][idepth]-model_data.vtxdepthE_theta2_Sclock[i][idepth]) << "\n";
+
+			    cout << "model_data.vV1_r1, model_data.vV2_r1 are " << model_data.vV1_r1[i][idepth]/prefactor << "\t" << model_data.vV2_r1[i][idepth]/prefactor << "\n";
+			    cout << "model_data.vV1_r2, model_data.vV2_r2 are " << model_data.vV1_r2[i][idepth]/prefactor << "\t" << model_data.vV2_r2[i][idepth]/prefactor << "\n";
+
+			    cout << "ray 1 at tx is " << scalefactor*model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*cos(model_data.vtxdepthE_theta1_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "ray 2 at tx is " << scalefactor*model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*cos(model_data.vtxdepthE_theta2_Sclock[i][idepth]/DEGRAD) << "\n";
+			    cout << "fraction of wavelength is " << sumphase/(2.*PI) << "\n";
+			    cout << "model_data.vpower_r1+model_data.vpower_r2 \t" <<model_data.vpower_r1[i][idepth]+model_data.vpower_r2[i][idepth] << "\n";
+			    cout << "prefactor is " << pow(model_data.vrxdepth_atten[i][idepth]*model_data.vtxdepth_beam1[i][idepth]*model_data.vrxdepth_beam1[i][idepth],2) << "\n";
+			    cout << "three factors are " << model_data.vrxdepth_atten[i][idepth] << "\t" << model_data.vtxdepth_beam1[i][idepth] << "\t" << model_data.vrxdepth_beam1[i][idepth] << "\n";
+
+
+			}
+
+			// ----------------------------------------------------------------
+			// Derived polarization observables at the receiver.
+			//
+			// Psi   ~ arctangent of the channel ratio
+			// Omega ~ complementary representation using arccos of normalized r1
+			//
+			// Same quantities are computed both for voltage-like and field-like
+			// amplitudes.
+			// ----------------------------------------------------------------
+			model_data.vpolarization_Psi_rx[i].push_back(atan2(model_data.vvoltage_r2[i][idepth],model_data.vvoltage_r1[i][idepth])*DEGRAD);
+			model_data.vpolarization_Omega_rx[i].push_back(acos(model_data.vvoltage_r1[i][idepth]/(sqrt(model_data.vvoltage_r1[i][idepth]*model_data.vvoltage_r1[i][idepth]+model_data.vvoltage_r2[i][idepth]*model_data.vvoltage_r2[i][idepth])))*DEGRAD);
+			model_data.vEpolarization_Psi_rx[i].push_back(atan2(model_data.vfield_r2[i][idepth],model_data.vfield_r1[i][idepth])*DEGRAD);
+			model_data.vEpolarization_Omega_rx[i].push_back(acos(model_data.vfield_r1[i][idepth]/(sqrt(model_data.vfield_r1[i][idepth]*model_data.vfield_r1[i][idepth]+model_data.vfield_r2[i][idepth]*model_data.vfield_r2[i][idepth])))*DEGRAD);
+
+			// Store total geometric path length
+			vsumlength[i].push_back(sumlength);
+
+			// Refractive indices at the pulser depth itself
+			vector<double> nvec_thisdepth;
+			nvec_thisdepth.resize(3);
+			nvec_thisdepth[0]=ice.gn1->Eval(model_data.vdepth[i][idepth]);
+			nvec_thisdepth[1]=ice.gn2->Eval(model_data.vdepth[i][idepth]);
+			nvec_thisdepth[2]=ice.gn3->Eval(model_data.vdepth[i][idepth]);
+
+			// ----------------------------------------------------------------
+			// Build launch and receive direction unit vectors either from
+			// ray tracing or from simple straight-line geometry.
+			// ----------------------------------------------------------------
+			if (geom.DORAYTRACING) {
+
+			    TVector3 plusz(0.,0.,1.);
+
+			    // Rotation axis that brings +z into the vertical plane of the ray
+			    TVector3 vrotate=plusz.Cross(yhat);
+
+			    if (vrotate.Mag()<HOWSMALLISTOOSMALL){
+				cout << "vrotate mag is " << vrotate.Mag() << "\n";
+			    }
+
+			    // Launch direction
+			    vrotate.SetMag(1.);
+			    model_data.rhat_launch[i]=plusz;
+			    model_data.rhat_launch[i].Rotate(launch_angle,vrotate);
+
+			    // Receive direction
+			    model_data.rhat_receive[i]=plusz;
+			    model_data.rhat_receive[i].Rotate(receive_angle,vrotate);
+
+			}
+			else {
+
+			    // Straight-line approximation if ray tracing is disabled
+			    model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			    model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			    model_data.rhat_launch[i].SetZ(geom.station_depths[i]-model_data.vdepth[i][idepth]);
+
+			    model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+			    model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+			    model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
+			}
+
+			// Normalize and sanity check
+			if (model_data.rhat_launch[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "rhat[i] mag is " << model_data.rhat_launch[i].Mag() << "\n";
+			}
+			model_data.rhat_launch[i].SetMag(1.);
+
+			if (model_data.rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			    cout << "model_data.rhat_receive[i] mag is " << model_data.rhat_receive[i].Mag() << "\n";
+			}
+			model_data.rhat_receive[i].SetMag(1.);
+
+		    }
+		    else {
+
+			// ----------------------------------------------------------------
+			// If no ray solution was found, fall back to simple straight-line
+			// source-to-station geometry.
+			// ----------------------------------------------------------------
+			model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+			model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+			model_data.rhat_launch[i].SetZ(geom.station_depths[i]-model_data.vdepth[i][idepth]);
+
+			model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+			model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+			model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
+		    }
+
+		    // Store launch and receive polar angles (degrees)
+		    model_data.vreceiveangle[i].push_back(model_data.rhat_receive[i].Theta()*DEGRAD);
+		    model_data.vlaunchangle[i].push_back(model_data.rhat_launch[i].Theta()*DEGRAD);
+
+		    // Final normalization / safety checks
+		    if (model_data.rhat_launch[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "rhat[i] mag is " << model_data.rhat_launch[i].Mag() << "\n";
+		    }
+
+		    model_data.rhat_launch[i].SetMag(1.);
+
+		    if (model_data.rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+			cout << "model_data.rhat_receive[i] mag is " << model_data.rhat_receive[i].Mag() << "\n";
+		    }
+
+		    model_data.rhat_receive[i].SetMag(1.);
+		}
+    }
 		const sec loop_duration = clock::now() - before;
 		loop_time += static_cast<double>( loop_duration.count() );
 		// --------------------------------------------------------------------
 		// Convert all accumulated per-depth vectors into ROOT TGraphs for plotting
 		// and for later writing to output files.
 		// --------------------------------------------------------------------
-		gtxdepth_beam1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_beam1[i][0]);
-		gtxdepth_beam2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_beam2[i][0]);
+		model_data.gtxdepth_beam1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_beam1[i][0]);
+		model_data.gtxdepth_beam2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_beam2[i][0]);
 
-		grxdepth_beam1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_beam1[i][0]);
-		grxdepth_beam2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_beam2[i][0]);
+		model_data.grxdepth_beam1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_beam1[i][0]);
+		model_data.grxdepth_beam2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_beam2[i][0]);
 
-		grxdepth_atten[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten[i][0]);
-		grxdepth_atten_beam[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam[i][0]);
-		grxdepth_atten_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_power[i][0]);
-		grxdepth_atten_beam_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam_power[i][0]);
+		model_data.grxdepth_atten[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten[i][0]);
+		model_data.grxdepth_atten_beam[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten_beam[i][0]);
+		model_data.grxdepth_atten_power[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten_power[i][0]);
+		model_data.grxdepth_atten_beam_power[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten_beam_power[i][0]);
 
-		gtxdepth_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1[i][0]);
-		gtxdepth_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2[i][0]);
+		model_data.gtxdepth_theta1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta1[i][0]);
+		model_data.gtxdepth_theta2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta2[i][0]);
 
-		grxdepth_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta1[i][0]);
-		grxdepth_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta2[i][0]);
+		model_data.grxdepth_theta1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_theta1[i][0]);
+		model_data.grxdepth_theta2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_theta2[i][0]);
 
-		grxdepthE_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta1[i][0]);
-		grxdepthE_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta2[i][0]);
+		model_data.grxdepthE_theta1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepthE_theta1[i][0]);
+		model_data.grxdepthE_theta2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepthE_theta2[i][0]);
 
-		gtxdepth_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1_Sclock[i][0]);
-		gtxdepth_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2_Sclock[i][0]);
+		model_data.gtxdepth_theta1_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta1_Sclock[i][0]);
+		model_data.gtxdepth_theta2_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta2_Sclock[i][0]);
 
-		grxdepth_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta1_Sclock[i][0]);
-		grxdepth_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_theta2_Sclock[i][0]);
+		model_data.grxdepth_theta1_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_theta1_Sclock[i][0]);
+		model_data.grxdepth_theta2_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_theta2_Sclock[i][0]);
 
-		gtxdepth_dispersion1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_dispersion1[i][0]);
-		gtxdepth_dispersion2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_dispersion2[i][0]);
+		model_data.gtxdepth_dispersion1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_dispersion1[i][0]);
+		model_data.gtxdepth_dispersion2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_dispersion2[i][0]);
 
-		// Note: these two graphs use data.vtxdepth_theta1/2 rather than data.vtxdepthE_theta1/2
-		gtxdepthE_theta1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta1[i][0]);
-		gtxdepthE_theta2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepth_theta2[i][0]);
+		// Note: these two graphs use model_data.vtxdepth_theta1/2 rather than model_data.vtxdepthE_theta1/2
+		model_data.gtxdepthE_theta1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta1[i][0]);
+		model_data.gtxdepthE_theta2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepth_theta2[i][0]);
 
-		gtxdepthE_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepthE_theta1_Sclock[i][0]);
-		gtxdepthE_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vtxdepthE_theta2_Sclock[i][0]);
+		model_data.gtxdepthE_theta1_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepthE_theta1_Sclock[i][0]);
+		model_data.gtxdepthE_theta2_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vtxdepthE_theta2_Sclock[i][0]);
 
-		grxdepthE_theta1_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta1_Sclock[i][0]);
-		grxdepthE_theta2_Sclock[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepthE_theta2_Sclock[i][0]);
+		model_data.grxdepthE_theta1_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepthE_theta1_Sclock[i][0]);
+		model_data.grxdepthE_theta2_Sclock[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepthE_theta2_Sclock[i][0]);
 
-		gdotShats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotShats_tx[i][0]);
-		gdotEhats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotEhats_tx[i][0]);
-		gdotDhats_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdotDhats_tx[i][0]);
+		model_data.gdotShats_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vdotShats_tx[i][0]);
+		model_data.gdotEhats_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vdotEhats_tx[i][0]);
+		model_data.gdotDhats_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vdotDhats_tx[i][0]);
 
-		g_parameter0[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_parameter0[i][0]);
-		g_atten[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten[i][0]);
-		g_atten_beam[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam[i][0]);
-		g_atten_beam_crosspol[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol[i][0]);
-		gfunc_noadjust[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_func_noadjust[i][0]);
-		g_atten_beam_crosspol_nointerferencefunc[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol_nointerferencefunc[i][0]);
-		g_atten_beam_crosspol_func[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vmag_atten_beam_crosspol_func[i][0]);
-		g_sumphase[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vtimediff[i][0]);
-		g_notflipped[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vnotflipped[i][0]);
-		g_sumlength[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&vsumlength[i][0]);
+		g_parameter0[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_parameter0[i][0]);
+		g_atten[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_atten[i][0]);
+		g_atten_beam[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_atten_beam[i][0]);
+		g_atten_beam_crosspol[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_atten_beam_crosspol[i][0]);
+		gfunc_noadjust[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_func_noadjust[i][0]);
+		g_atten_beam_crosspol_nointerferencefunc[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_atten_beam_crosspol_nointerferencefunc[i][0]);
+		g_atten_beam_crosspol_func[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vmag_atten_beam_crosspol_func[i][0]);
+		g_sumphase[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vtimediff[i][0]);
+		g_notflipped[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vnotflipped[i][0]);
+		g_sumlength[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&vsumlength[i][0]);
 
 		// One frequency spectrum graph per pulser depth
-		for (int idepth=0;idepth<data.vdepth[i].size();idepth++) {
+		for (int idepth=0;idepth<model_data.vdepth[i].size();idepth++) {
 		    g_spectra[i][idepth]=new TGraph(cfg.vfreqs.size(),&cfg.vfreqs[0],&vspectra[i][idepth][0]);
 		}
 
-		g_atten_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_power[i][0]);
-		g_atten_beam_power[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vrxdepth_atten_beam_power[i][0]);
+		g_atten_power[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten_power[i][0]);
+		g_atten_beam_power[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vrxdepth_atten_beam_power[i][0]);
 
 		// Voltage / field / interference component graphs
-		gV1_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1_r1[i][0]);
-		gV1_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1_r2[i][0]);
-		gV1squared_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1squared_r1[i][0]);
-		gV1squared_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1squared_r2[i][0]);
-		gpower_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpower_r1[i][0]);
-		gpower_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpower_r2[i][0]);
-		gvoltage_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvoltage_r1[i][0]);
-		gvoltage_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvoltage_r2[i][0]);
-		gfield_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vfield_r1[i][0]);
-		gfield_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vfield_r2[i][0]);
-		gV2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2_r1[i][0]);
-		gV2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2_r2[i][0]);
-		gV1V2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1V2_r1[i][0]);
-		gV1V2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV1V2_r2[i][0]);
-		goppositeV1V2_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voppositeV1V2_r1[i][0]);
-		goppositeV1V2_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voppositeV1V2_r2[i][0]);
-		gV2squared_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2squared_r1[i][0]);
-		gV2squared_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vV2squared_r2[i][0]);
-		genvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_minus_r1[i][0]);
-		genvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_minus_r2[i][0]);
-		genvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_plus_r1[i][0]);
-		genvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.venvelope_plus_r2[i][0]);
-		gvenvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_minus_r1[i][0]);
-		gvenvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_minus_r2[i][0]);
-		gvenvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_plus_r1[i][0]);
-		gvenvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vvenvelope_plus_r2[i][0]);
-		gEenvelope_minus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_minus_r1[i][0]);
-		gEenvelope_minus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_minus_r2[i][0]);
-		gEenvelope_plus_r1[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_plus_r1[i][0]);
-		gEenvelope_plus_r2[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEenvelope_plus_r2[i][0]);
-		gepsilon1_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon1_tx[i][0]);
-		gepsilon2_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon2_tx[i][0]);
+		model_data.gV1_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1_r1[i][0]);
+		model_data.gV1_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1_r2[i][0]);
+		model_data.gV1squared_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1squared_r1[i][0]);
+		model_data.gV1squared_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1squared_r2[i][0]);
+		model_data.gpower_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vpower_r1[i][0]);
+		model_data.gpower_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vpower_r2[i][0]);
+		model_data.gvoltage_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvoltage_r1[i][0]);
+		model_data.gvoltage_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvoltage_r2[i][0]);
+		model_data.gfield_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vfield_r1[i][0]);
+		model_data.gfield_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vfield_r2[i][0]);
+		model_data.gV2_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV2_r1[i][0]);
+		model_data.gV2_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV2_r2[i][0]);
+		model_data.gV1V2_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1V2_r1[i][0]);
+		model_data.gV1V2_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV1V2_r2[i][0]);
+		model_data.goppositeV1V2_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.voppositeV1V2_r1[i][0]);
+		model_data.goppositeV1V2_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.voppositeV1V2_r2[i][0]);
+		model_data.gV2squared_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV2squared_r1[i][0]);
+		model_data.gV2squared_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vV2squared_r2[i][0]);
+		model_data.genvelope_minus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.venvelope_minus_r1[i][0]);
+		model_data.genvelope_minus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.venvelope_minus_r2[i][0]);
+		model_data.genvelope_plus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.venvelope_plus_r1[i][0]);
+		model_data.genvelope_plus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.venvelope_plus_r2[i][0]);
+		model_data.gvenvelope_minus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvenvelope_minus_r1[i][0]);
+		model_data.gvenvelope_minus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvenvelope_minus_r2[i][0]);
+		model_data.gvenvelope_plus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvenvelope_plus_r1[i][0]);
+		model_data.gvenvelope_plus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vvenvelope_plus_r2[i][0]);
+		model_data.gEenvelope_minus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEenvelope_minus_r1[i][0]);
+		model_data.gEenvelope_minus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEenvelope_minus_r2[i][0]);
+		model_data.gEenvelope_plus_r1[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEenvelope_plus_r1[i][0]);
+		model_data.gEenvelope_plus_r2[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEenvelope_plus_r2[i][0]);
+		model_data.gepsilon1_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vepsilon1_tx[i][0]);
+		model_data.gepsilon2_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vepsilon2_tx[i][0]);
 
 		// Polarization angle graphs
-		gpolarization_Omega_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpolarization_Omega_rx[i][0]);
-		gpolarization_Psi_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vpolarization_Psi_rx[i][0]);
+		model_data.gpolarization_Omega_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vpolarization_Omega_rx[i][0]);
+		model_data.gpolarization_Psi_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vpolarization_Psi_rx[i][0]);
 
-		gEpolarization_Omega_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEpolarization_Omega_rx[i][0]);
-		gEpolarization_Psi_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vEpolarization_Psi_rx[i][0]);
+		model_data.gEpolarization_Omega_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEpolarization_Omega_rx[i][0]);
+		model_data.gEpolarization_Psi_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vEpolarization_Psi_rx[i][0]);
 
 		// Build reversed-depth versions for plots that want positive pulser depth
-		for (int j=0;j<data.vdepth[i].size();j++) {
-		    data.vpolarization_reversedepth_Omega_rx[i].push_back(data.vpolarization_Omega_rx[i][data.vpolarization_Omega_rx[i].size()-1-j]);
-		    data.vpolarization_reversedepth_Psi_rx[i].push_back(data.vpolarization_Psi_rx[i][data.vpolarization_Psi_rx[i].size()-1-j]);
-		    data.vEpolarization_reversedepth_Omega_rx[i].push_back(data.vEpolarization_Omega_rx[i][data.vEpolarization_Omega_rx[i].size()-1-j]);
-		    data.vEpolarization_reversedepth_Psi_rx[i].push_back(data.vEpolarization_Psi_rx[i][data.vEpolarization_Psi_rx[i].size()-1-j]);
+		for (int j=0;j<model_data.vdepth[i].size();j++) {
+		    model_data.vpolarization_reversedepth_Omega_rx[i].push_back(model_data.vpolarization_Omega_rx[i][model_data.vpolarization_Omega_rx[i].size()-1-j]);
+		    model_data.vpolarization_reversedepth_Psi_rx[i].push_back(model_data.vpolarization_Psi_rx[i][model_data.vpolarization_Psi_rx[i].size()-1-j]);
+		    model_data.vEpolarization_reversedepth_Omega_rx[i].push_back(model_data.vEpolarization_Omega_rx[i][model_data.vEpolarization_Omega_rx[i].size()-1-j]);
+		    model_data.vEpolarization_reversedepth_Psi_rx[i].push_back(model_data.vEpolarization_Psi_rx[i][model_data.vEpolarization_Psi_rx[i].size()-1-j]);
 
 		}
 
-		gpolarization_reversedepth_Omega_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vpolarization_reversedepth_Omega_rx[i][0]);
-		gpolarization_reversedepth_Psi_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vpolarization_reversedepth_Psi_rx[i][0]);
+		model_data.gpolarization_reversedepth_Omega_rx[i]=new TGraph(model_data.vreversedepth[i].size(),&model_data.vreversedepth[i][0],&model_data.vpolarization_reversedepth_Omega_rx[i][0]);
+		model_data.gpolarization_reversedepth_Psi_rx[i]=new TGraph(model_data.vreversedepth[i].size(),&model_data.vreversedepth[i][0],&model_data.vpolarization_reversedepth_Psi_rx[i][0]);
 
-		gEpolarization_reversedepth_Omega_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vEpolarization_reversedepth_Omega_rx[i][0]);
-		gEpolarization_reversedepth_Psi_rx[i]=new TGraph(data.vreversedepth[i].size(),&data.vreversedepth[i][0],&data.vEpolarization_reversedepth_Psi_rx[i][0]);
+		model_data.gEpolarization_reversedepth_Omega_rx[i]=new TGraph(model_data.vreversedepth[i].size(),&model_data.vreversedepth[i][0],&model_data.vEpolarization_reversedepth_Omega_rx[i][0]);
+		model_data.gEpolarization_reversedepth_Psi_rx[i]=new TGraph(model_data.vreversedepth[i].size(),&model_data.vreversedepth[i][0],&model_data.vEpolarization_reversedepth_Psi_rx[i][0]);
 
-		gdiffepsilon_tx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdiffepsilon_tx[i][0]);
+		model_data.gdiffepsilon_tx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vdiffepsilon_tx[i][0]);
 
-		gepsilon1_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon1_rx[i][0]);
-		gepsilon2_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vepsilon2_rx[i][0]);
-		gdiffepsilon_rx[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vdiffepsilon_rx[i][0]);
+		model_data.gepsilon1_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vepsilon1_rx[i][0]);
+		model_data.gepsilon2_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vepsilon2_rx[i][0]);
+		model_data.gdiffepsilon_rx[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vdiffepsilon_rx[i][0]);
 
 		// Along-path diagnostic graphs for the special pulser depth
 		g_deltan[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vdeltan[i][0]);
@@ -1847,15 +2483,15 @@ int main(int argc, char** argv) {
 		g_phipe2_alongpath[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vphipe2_alongpath[i][0]);
 		g_deltan_pulserdepth[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&vdeltan[i][0]);
 
-		g_depth_istep[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&data.vistep[i][0]);
+		g_depth_istep[i]=new TGraph(vdepth_step[i].size(),&vdepth_step[i][0],&model_data.vistep[i][0]);
 
 		g_attenlengths[i]=new TGraph(vlengths[i].size(),&vlengths[i][0],&vattenlengths[i][0]);
-		g_receive_launch[i]=new TGraph(data.vreceiveangle[i].size(),&data.vreceiveangle[i][0],&data.vlaunchangle[i][0]);
-		g_receive[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vreceiveangle[i][0]);
-		g_launch[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vlaunchangle[i][0]);
-		g_output6[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput6[i][0]);
-		g_output7[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput7[i][0]);
-		g_output8[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.voutput8[i][0]);
+		model_data.g_receive_launch[i]=new TGraph(model_data.vreceiveangle[i].size(),&model_data.vreceiveangle[i][0],&model_data.vlaunchangle[i][0]);
+		model_data.g_receive[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vreceiveangle[i][0]);
+		model_data.g_launch[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vlaunchangle[i][0]);
+		model_data.g_output6[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.voutput6[i][0]);
+		model_data.g_output7[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.voutput7[i][0]);
+		model_data.g_output8[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.voutput8[i][0]);
 
 	    }
 
@@ -1908,7 +2544,7 @@ int main(int argc, char** argv) {
 
         // Draw measured SNR points where available
         if (i!=5) {
-            g1[i]=new TGraphErrors(data.vdepth_data[i].size(),&data.vdepth_data[i][0],&data.vsnrmax[i][0],&data.vdepth_data_err[i][0],&data.vsnrmax_err[i][0]);
+            g1[i]=new TGraphErrors(model_data.vdepth_data[i].size(),&model_data.vdepth_data[i][0],&model_data.vsnrmax[i][0],&model_data.vdepth_data_err[i][0],&model_data.vsnrmax_err[i][0]);
             g1[i]->SetMarkerColor(icolors[i]);
             g1[i]->SetMarkerSize(1.);
             g1[i]->SetMarkerStyle(20);
@@ -2026,9 +2662,9 @@ int main(int argc, char** argv) {
 
                     nvec_thisstep.resize(3);
 
-                    nvec_thisstep[0]=gn1->Eval(zs[istep]);
-                    nvec_thisstep[1]=gn2->Eval(zs[istep]);
-                    nvec_thisstep[2]=gn3->Eval(zs[istep]);
+                    nvec_thisstep[0]=ice.gn1->Eval(zs[istep]);
+                    nvec_thisstep[1]=ice.gn2->Eval(zs[istep]);
+                    nvec_thisstep[2]=ice.gn3->Eval(zs[istep]);
 
                     if (istep>0) {
                         rhat_thisstep[0]=-1.*(res[istep]-res[istep-UZAIRSTEP])*yhat[0];
@@ -2051,7 +2687,7 @@ int main(int argc, char** argv) {
 
                     }
                     else {
-                        rhat_thisstep=rhat[i];
+                        rhat_thisstep=model_data.rhat_launch[i];
 
                     }
 
@@ -2070,53 +2706,53 @@ int main(int argc, char** argv) {
                     cout << "vrotate mag is " << vrotate.Mag() << "\n";
 
                     vrotate.SetMag(1.);
-                    rhat[i]=plusz;
-                    rhat[i].Rotate(launch_angle,vrotate);
+                    model_data.rhat_launch[i]=plusz;
+                    model_data.rhat_launch[i].Rotate(launch_angle,vrotate);
 
 
-                    rhat_receive[i]=plusz;
-                    rhat_receive[i].Rotate(receive_angle,vrotate);
+                    model_data.rhat_receive[i]=plusz;
+                    model_data.rhat_receive[i].Rotate(receive_angle,vrotate);
                 }
                 else {
 
-                    rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
-                    rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
-                    rhat[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
+                    model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+                    model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+                    model_data.rhat_launch[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
 
-                    rhat_receive[i].SetX(rhat[i][0]);
-                    rhat_receive[i].SetY(rhat[i][1]);
-                    rhat_receive[i].SetZ(rhat[i][2]);
+                    model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+                    model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+                    model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
                 }
 
             }
             else {
 
                 // Straight-line fallback if no ray solution exists
-                rhat[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
-                rhat[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
-                rhat[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
+                model_data.rhat_launch[i].SetX(geom.station_coords[i][0]-geom.pulser_coords[0]);
+                model_data.rhat_launch[i].SetY(geom.station_coords[i][1]-geom.pulser_coords[1]);
+                model_data.rhat_launch[i].SetZ(geom.station_depths[i]-vpseudodepths_bigpic[i][j]);
 
-                rhat_receive[i].SetX(rhat[i][0]);
-                rhat_receive[i].SetY(rhat[i][1]);
-                rhat_receive[i].SetZ(rhat[i][2]);
+                model_data.rhat_receive[i].SetX(model_data.rhat_launch[i][0]);
+                model_data.rhat_receive[i].SetY(model_data.rhat_launch[i][1]);
+                model_data.rhat_receive[i].SetZ(model_data.rhat_launch[i][2]);
             }
-            if (rhat[i].Mag()<HOWSMALLISTOOSMALL){
-                cout << "rhat[i] mag is " << rhat[i].Mag() << "\n";
+            if (model_data.rhat_launch[i].Mag()<HOWSMALLISTOOSMALL){
+                cout << "rhat[i] mag is " << model_data.rhat_launch[i].Mag() << "\n";
             }
             
-            rhat[i].SetMag(1.);
+            model_data.rhat_launch[i].SetMag(1.);
             
-            if (rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
-                cout << "rhat_receive[i] mag is " << rhat_receive[i].Mag() << "\n";
+            if (model_data.rhat_receive[i].Mag()<HOWSMALLISTOOSMALL){
+                cout << "model_data.rhat_receive[i] mag is " << model_data.rhat_receive[i].Mag() << "\n";
             }
 
-            rhat_receive[i].SetMag(1.);
+            model_data.rhat_receive[i].SetMag(1.);
 
         }
 
         // Distance-based measured-data graph
         if (i!=5){
-            g1_distances[i]=new TGraphErrors(data.vtotal_distances[i].size(),&data.vtotal_distances[i][0],&data.vsnrmax[i][0],&data.vtotal_distances_err[i][0],&data.vsnrmax_err[i][0]);
+            g1_distances[i]=new TGraphErrors(model_data.vtotal_distances[i].size(),&model_data.vtotal_distances[i][0],&model_data.vsnrmax[i][0],&model_data.vtotal_distances_err[i][0],&model_data.vsnrmax_err[i][0]);
         }
 
         // Distance-domain model curves
@@ -2274,7 +2910,7 @@ int main(int argc, char** argv) {
 
     for (int i=0;i<geom.NSTATIONS;i++) {
 
-        g_angleS1_k[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vangle_Shat_e1_khat[i][0]);
+        g_angleS1_k[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vangle_Shat_e1_khat[i][0]);
 
         g_angleS1_k[i]->SetMarkerColor(icolors[i]);
         g_angleS1_k[i]->SetLineColor(icolors[i]);
@@ -2283,7 +2919,7 @@ int main(int argc, char** argv) {
 
         g_angleS1_k[i]->Draw("lsame");
 
-        g_angleS2_k[i]=new TGraph(data.vdepth[i].size(),&data.vdepth[i][0],&data.vangle_Shat_e2_khat[i][0]);
+        g_angleS2_k[i]=new TGraph(model_data.vdepth[i].size(),&model_data.vdepth[i][0],&model_data.vangle_Shat_e2_khat[i][0]);
 
         g_angleS2_k[i]->SetMarkerColor(icolors[i]);
         g_angleS2_k[i]->SetLineColor(icolors[i]);
@@ -2394,12 +3030,12 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c10->cd(istations+1);
 
-        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetMarkerColor(icolors[istations]);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineColor(icolors[istations]);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineStyle(kSolid);
-        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->SetLineWidth(2);
+        g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.depth_special)]->SetMarkerColor(icolors[istations]);
+        g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.depth_special)]->SetLineColor(icolors[istations]);
+        g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.depth_special)]->SetLineStyle(kSolid);
+        g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.depth_special)]->SetLineWidth(2);
 
-        g_spectra[istations][(int)g_idepth[istations]->Eval(geom.depth_special)]->Draw("al");
+        g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.depth_special)]->Draw("al");
     }
     sname=sdir+"spectra.pdf";
     c10->Print(sname.c_str());
@@ -2534,7 +3170,7 @@ int main(int argc, char** argv) {
 
     // ------------------------------------------------------------------------
     // Plot the depth->index mapping used throughout the code.
-    // This is useful because many later selections use g_idepth->Eval(depth)
+    // This is useful because many later selections use model_data.g_idepth->Eval(depth)
     // to convert a physical pulser depth into the corresponding vector index.
     // ------------------------------------------------------------------------
     TCanvas *c12=new TCanvas("c12","c12",800,800);
@@ -2545,12 +3181,12 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        g_idepth[istations]->SetMarkerColor(icolors[istations]);
-        g_idepth[istations]->SetLineColor(icolors[istations]);
-        g_idepth[istations]->SetLineStyle(kSolid);
-        g_idepth[istations]->SetLineWidth(2);
+        model_data.g_idepth[istations]->SetMarkerColor(icolors[istations]);
+        model_data.g_idepth[istations]->SetLineColor(icolors[istations]);
+        model_data.g_idepth[istations]->SetLineStyle(kSolid);
+        model_data.g_idepth[istations]->SetLineWidth(2);
 
-        g_idepth[istations]->Draw("al");
+        model_data.g_idepth[istations]->Draw("al");
     }
     sname=sdir+"index.pdf";
     c12->Print(sname.c_str());
@@ -2573,20 +3209,20 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        g_receive_launch[istations]->SetMarkerColor(icolors[istations]);
-        g_receive_launch[istations]->SetLineColor(icolors[istations]);
-        g_receive_launch[istations]->SetLineStyle(kSolid);
-        g_receive_launch[istations]->SetLineWidth(2);
+        model_data.g_receive_launch[istations]->SetMarkerColor(icolors[istations]);
+        model_data.g_receive_launch[istations]->SetLineColor(icolors[istations]);
+        model_data.g_receive_launch[istations]->SetLineStyle(kSolid);
+        model_data.g_receive_launch[istations]->SetLineWidth(2);
 
-        g_launch[istations]->SetMarkerColor(icolors[istations]);
-        g_launch[istations]->SetLineColor(icolors[istations]);
-        g_launch[istations]->SetLineStyle(kSolid);
-        g_launch[istations]->SetLineWidth(2);
+        model_data.g_launch[istations]->SetMarkerColor(icolors[istations]);
+        model_data.g_launch[istations]->SetLineColor(icolors[istations]);
+        model_data.g_launch[istations]->SetLineStyle(kSolid);
+        model_data.g_launch[istations]->SetLineWidth(2);
 
-        g_receive[istations]->SetMarkerColor(icolors[istations]);
-        g_receive[istations]->SetLineColor(icolors[istations]);
-        g_receive[istations]->SetLineStyle(kSolid);
-        g_receive[istations]->SetLineWidth(2);
+        model_data.g_receive[istations]->SetMarkerColor(icolors[istations]);
+        model_data.g_receive[istations]->SetLineColor(icolors[istations]);
+        model_data.g_receive[istations]->SetLineStyle(kSolid);
+        model_data.g_receive[istations]->SetLineWidth(2);
     }
 
     c13->cd(1);
@@ -2594,7 +3230,7 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         h13a->SetXTitle("Receive angles (degrees)");
-        g_receive[istations]->Draw("lsame");
+        model_data.g_receive[istations]->Draw("lsame");
     }
 
     c13->cd(2);
@@ -2602,7 +3238,7 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         h13b->SetXTitle("Launch angles (degrees)");
-        g_launch[istations]->Draw("lsame");
+        model_data.g_launch[istations]->Draw("lsame");
     }
 
     c13->cd(3);
@@ -2612,7 +3248,7 @@ int main(int argc, char** argv) {
         h13c->SetXTitle("Receive angle (degrees)");
         h13c->SetYTitle("Launch angle (degrees)");
 
-        g_receive_launch[istations]->Draw("lsame");
+        model_data.g_receive_launch[istations]->Draw("lsame");
     }
 
     sname=sdir+"receive_launch.pdf";
@@ -2632,39 +3268,39 @@ int main(int argc, char** argv) {
     h14->SetXTitle("Height (meters)");
     h14->SetYTitle("V_{z} (degrees)");
 
-    g_V->SetLineColor(kBlack);
-    g_V->SetLineStyle(kSolid);
-    g_V->SetLineWidth(2);
+    ice.g_V->SetLineColor(kBlack);
+    ice.g_V->SetLineStyle(kSolid);
+    ice.g_V->SetLineWidth(2);
 
-    g_V->Draw("lsame");
+    ice.g_V->Draw("lsame");
 
     sname=sdir+"V.pdf";
     c14->Print(sname.c_str());
 
     // ------------------------------------------------------------------------
     // Plot the three principal refractive indices vs depth.
-    // gn1, gn2, gn3 were built from the smoothed depth-dependent profiles.
+    // ice.gn1, ice.gn2, ice.gn3 were built from the smoothed depth-dependent profiles.
     // ------------------------------------------------------------------------
     TCanvas *c15=new TCanvas("c15","c15",800,800);
     c15->SetLeftMargin(0.15);
     c15->SetBottomMargin(0.15);
 
-    gn1->SetLineColor(kGray+1);
-    gn1->SetLineStyle(kSolid);
-    gn1->SetLineWidth(3);
+    ice.gn1->SetLineColor(kGray+1);
+    ice.gn1->SetLineStyle(kSolid);
+    ice.gn1->SetLineWidth(3);
 
-    gn2->SetLineColor(kGray+2);
-    gn2->SetLineStyle(kSolid);
-    gn2->SetLineWidth(3);
+    ice.gn2->SetLineColor(kGray+2);
+    ice.gn2->SetLineStyle(kSolid);
+    ice.gn2->SetLineWidth(3);
 
-    gn3->SetLineColor(kGray+3);
-    gn3->SetLineStyle(kSolid);
-    gn3->SetLineWidth(3);
+    ice.gn3->SetLineColor(kGray+3);
+    ice.gn3->SetLineStyle(kSolid);
+    ice.gn3->SetLineWidth(3);
 
 
 
     // ------------------------------------------------------------------------
-    // Plot raw ray-tracing diagnostic outputs stored in data.voutput6/7/8.
+    // Plot raw ray-tracing diagnostic outputs stored in model_data.voutput6/7/8.
     // These come directly from IceRayTracing(...) and help diagnose which
     // solution branches are present or how the solver is behaving.
     // ------------------------------------------------------------------------
@@ -2681,20 +3317,20 @@ int main(int argc, char** argv) {
     h16->SetYTitle("Principal axis");
     h16->Draw();
 
-    gn1->Draw("lsame");
-    gn2->Draw("lsame");
-    gn3->Draw("lsame");
+    ice.gn1->Draw("lsame");
+    ice.gn2->Draw("lsame");
+    ice.gn3->Draw("lsame");
 
     auto legend2 = new TLegend(0.6,0.2,0.8,0.4);
 
     legend2->SetTextSize(0.05);
     legend2->SetBorderSize(0);
-    gn1->SetName("gn1");
-    gn2->SetName("gn2");
-    gn3->SetName("gn3");
-    legend2->AddEntry("gn1","n_{ #alpha}","l");
-    legend2->AddEntry("gn2","n_{ #beta}","l");
-    legend2->AddEntry("gn3","n_{ #gamma}","l");
+    ice.gn1->SetName("ice.gn1");
+    ice.gn2->SetName("ice.gn2");
+    ice.gn3->SetName("ice.gn3");
+    legend2->AddEntry("ice.gn1","n_{ #alpha}","l");
+    legend2->AddEntry("ice.gn2","n_{ #beta}","l");
+    legend2->AddEntry("ice.gn3","n_{ #gamma}","l");
     legend2->Draw("same");
 
     sname=sdir+"n123_zoomed.pdf";
@@ -2708,27 +3344,27 @@ int main(int argc, char** argv) {
     h17->Draw();
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        g_output6[istations]->SetLineColor(icolors[istations]);
-        g_output6[istations]->SetLineWidth(2);
-        g_output6[istations]->Draw("lsame");
+        model_data.g_output6[istations]->SetLineColor(icolors[istations]);
+        model_data.g_output6[istations]->SetLineWidth(2);
+        model_data.g_output6[istations]->Draw("lsame");
     }
 
     c17->cd(2);
     h17->Draw();
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        g_output7[istations]->SetLineColor(icolors[istations]);
-        g_output7[istations]->SetLineWidth(2);
-        g_output7[istations]->Draw("lsame");
+        model_data.g_output7[istations]->SetLineColor(icolors[istations]);
+        model_data.g_output7[istations]->SetLineWidth(2);
+        model_data.g_output7[istations]->Draw("lsame");
     }
 
     c17->cd(3);
     h17->Draw();
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        g_output8[istations]->SetLineColor(icolors[istations]);
-        g_output8[istations]->SetLineWidth(2);
-        g_output8[istations]->Draw("lsame");
+        model_data.g_output8[istations]->SetLineColor(icolors[istations]);
+        model_data.g_output8[istations]->SetLineWidth(2);
+        model_data.g_output8[istations]->Draw("lsame");
     }
 
     sname=sdir+"outputs.pdf";
@@ -2750,25 +3386,25 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c18->cd(istations+1);
         h18a->Draw();
-        gtxdepth_theta1[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_theta1[istations]->SetLineWidth(2);
-        gtxdepth_theta1[istations]->Draw("lsame");
-        gtxdepthE_theta1[istations]->SetLineColor(icolors[istations]);
-        gtxdepthE_theta1[istations]->SetLineWidth(2);
-        gtxdepthE_theta1[istations]->SetLineStyle(kDashed);
-        gtxdepthE_theta1[istations]->Draw("lsame");
+        model_data.gtxdepth_theta1[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_theta1[istations]->SetLineWidth(2);
+        model_data.gtxdepth_theta1[istations]->Draw("lsame");
+        model_data.gtxdepthE_theta1[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepthE_theta1[istations]->SetLineWidth(2);
+        model_data.gtxdepthE_theta1[istations]->SetLineStyle(kDashed);
+        model_data.gtxdepthE_theta1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c18->cd(geom.NSTATIONS+istations+1);
         h18b->Draw();
-        gtxdepth_theta2[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_theta2[istations]->SetLineWidth(2);
-        gtxdepth_theta2[istations]->Draw("lsame");
-        gtxdepthE_theta2[istations]->SetLineColor(icolors[istations]);
-        gtxdepthE_theta2[istations]->SetLineWidth(2);
-        gtxdepthE_theta2[istations]->SetLineStyle(kDashed);
-        gtxdepthE_theta2[istations]->Draw("lsame");
+        model_data.gtxdepth_theta2[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_theta2[istations]->SetLineWidth(2);
+        model_data.gtxdepth_theta2[istations]->Draw("lsame");
+        model_data.gtxdepthE_theta2[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepthE_theta2[istations]->SetLineWidth(2);
+        model_data.gtxdepthE_theta2[istations]->SetLineStyle(kDashed);
+        model_data.gtxdepthE_theta2[istations]->Draw("lsame");
     }
     sname=sdir+"anglesontheclock.pdf";
     c18->Print(sname.c_str());
@@ -2784,16 +3420,16 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c19->cd(istations+1);
         h19->Draw();
-        gtxdepth_dispersion1[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_dispersion1[istations]->SetLineWidth(2);
-        gtxdepth_dispersion1[istations]->Draw("lsame");
+        model_data.gtxdepth_dispersion1[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_dispersion1[istations]->SetLineWidth(2);
+        model_data.gtxdepth_dispersion1[istations]->Draw("lsame");
     }
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c19->cd(geom.NSTATIONS+istations+1);
         h19->Draw();
-        gtxdepth_dispersion2[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_dispersion2[istations]->SetLineWidth(2);
-        gtxdepth_dispersion2[istations]->Draw("lsame");
+        model_data.gtxdepth_dispersion2[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_dispersion2[istations]->SetLineWidth(2);
+        model_data.gtxdepth_dispersion2[istations]->Draw("lsame");
     }
     sname=sdir+"dispersionangles.pdf";
     c19->Print(sname.c_str());
@@ -2809,28 +3445,28 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c20->cd(istations+1);
         h20a->Draw();
-        gtxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_theta1_Sclock[istations]->SetLineWidth(2);
-        gtxdepth_theta1_Sclock[istations]->Draw("lsame");
-        gtxdepthE_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
-        gtxdepthE_theta1_Sclock[istations]->SetLineWidth(2);
-        gtxdepthE_theta1_Sclock[istations]->SetLineStyle(kDashed);
-        gtxdepthE_theta1_Sclock[istations]->Draw("lsame");
+        model_data.gtxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_theta1_Sclock[istations]->SetLineWidth(2);
+        model_data.gtxdepth_theta1_Sclock[istations]->Draw("lsame");
+        model_data.gtxdepthE_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepthE_theta1_Sclock[istations]->SetLineWidth(2);
+        model_data.gtxdepthE_theta1_Sclock[istations]->SetLineStyle(kDashed);
+        model_data.gtxdepthE_theta1_Sclock[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c20->cd(geom.NSTATIONS+istations+1);
 
-        gtxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_theta2_Sclock[istations]->SetLineWidth(2);
+        model_data.gtxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_theta2_Sclock[istations]->SetLineWidth(2);
 
-        gtxdepthE_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
-        gtxdepthE_theta2_Sclock[istations]->SetLineWidth(2);
-        gtxdepthE_theta2_Sclock[istations]->SetLineStyle(kDashed);
+        model_data.gtxdepthE_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepthE_theta2_Sclock[istations]->SetLineWidth(2);
+        model_data.gtxdepthE_theta2_Sclock[istations]->SetLineStyle(kDashed);
 
         h20b->Draw();
-        gtxdepth_theta2_Sclock[istations]->Draw("lsame");
-        gtxdepthE_theta2_Sclock[istations]->Draw("lsame");
+        model_data.gtxdepth_theta2_Sclock[istations]->Draw("lsame");
+        model_data.gtxdepthE_theta2_Sclock[istations]->Draw("lsame");
     }
     sname=sdir+"anglesontheSclock.pdf";
     c20->Print(sname.c_str());
@@ -2847,17 +3483,17 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c21->cd(istations+1);
         h21a->Draw();
-        gV1_r1[istations]->SetLineColor(icolors[istations]);
-        gV1_r1[istations]->SetLineWidth(2);
-        gV1_r1[istations]->Draw("lsame");
+        model_data.gV1_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gV1_r1[istations]->SetLineWidth(2);
+        model_data.gV1_r1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c21->cd(geom.NSTATIONS+istations+1);
         h21b->Draw();
-        gV1_r2[istations]->SetLineColor(icolors[istations]);
-        gV1_r2[istations]->SetLineWidth(2);
-        gV1_r2[istations]->Draw("lsame");
+        model_data.gV1_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gV1_r2[istations]->SetLineWidth(2);
+        model_data.gV1_r2[istations]->Draw("lsame");
     }
 
     sname=sdir+"V1.pdf";
@@ -2874,9 +3510,9 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c22->cd(istations+1);
         h22a->Draw();
-        gV2_r1[istations]->SetLineColor(icolors[istations]);
-        gV2_r1[istations]->SetLineWidth(2);
-        gV2_r1[istations]->Draw("lsame");
+        model_data.gV2_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gV2_r1[istations]->SetLineWidth(2);
+        model_data.gV2_r1[istations]->Draw("lsame");
 
     }
 
@@ -2884,9 +3520,9 @@ int main(int argc, char** argv) {
         c22->cd(geom.NSTATIONS+istations+1);
 
         h22b->Draw();
-        gV2_r2[istations]->SetLineColor(icolors[istations]);
-        gV2_r2[istations]->SetLineWidth(2);
-        gV2_r2[istations]->Draw("lsame");
+        model_data.gV2_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gV2_r2[istations]->SetLineWidth(2);
+        model_data.gV2_r2[istations]->Draw("lsame");
     }
 
     sname=sdir+"V2.pdf";
@@ -2903,12 +3539,12 @@ int main(int argc, char** argv) {
         c23->cd(istations+1);
         h23a->Draw();
 
-        genvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
-        genvelope_plus_r1[istations]->SetLineWidth(2);
-        genvelope_plus_r1[istations]->Draw("lsame");
-        genvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
-        genvelope_minus_r1[istations]->SetLineWidth(2);
-        genvelope_minus_r1[istations]->Draw("lsame");
+        model_data.genvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.genvelope_plus_r1[istations]->SetLineWidth(2);
+        model_data.genvelope_plus_r1[istations]->Draw("lsame");
+        model_data.genvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.genvelope_minus_r1[istations]->SetLineWidth(2);
+        model_data.genvelope_minus_r1[istations]->Draw("lsame");
 
     }
 
@@ -2916,12 +3552,12 @@ int main(int argc, char** argv) {
         c23->cd(geom.NSTATIONS+istations+1);
 
         h23b->Draw();
-        genvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
-        genvelope_plus_r2[istations]->SetLineWidth(2);
-        genvelope_plus_r2[istations]->Draw("lsame");
-        genvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
-        genvelope_minus_r2[istations]->SetLineWidth(2);
-        genvelope_minus_r2[istations]->Draw("lsame");
+        model_data.genvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.genvelope_plus_r2[istations]->SetLineWidth(2);
+        model_data.genvelope_plus_r2[istations]->Draw("lsame");
+        model_data.genvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.genvelope_minus_r2[istations]->SetLineWidth(2);
+        model_data.genvelope_minus_r2[istations]->Draw("lsame");
     }
     sname=sdir+"envelopes.pdf";
     c23->Print(sname.c_str());
@@ -2954,14 +3590,14 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gepsilon1_tx[istations]->SetLineColor(icolors[istations]);
-        gepsilon1_tx[istations]->SetLineWidth(2);
-        gepsilon1_tx[istations]->Draw("lsame");
-        gepsilon2_tx[istations]->SetLineColor(icolors[istations]);
-        gepsilon2_tx[istations]->SetLineWidth(2);
-        gepsilon2_tx[istations]->SetLineStyle(kDashed);
+        model_data.gepsilon1_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gepsilon1_tx[istations]->SetLineWidth(2);
+        model_data.gepsilon1_tx[istations]->Draw("lsame");
+        model_data.gepsilon2_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gepsilon2_tx[istations]->SetLineWidth(2);
+        model_data.gepsilon2_tx[istations]->SetLineStyle(kDashed);
 
-        gepsilon1_tx[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gepsilon1_tx[istations]->SetName(geom.snames[istations].c_str());
         legend24->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
     }
 
@@ -2983,15 +3619,15 @@ int main(int argc, char** argv) {
     legend26->SetTextSize(0.05);
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gepsilon1_rx[istations]->SetLineColor(icolors[istations]);
-        gepsilon1_rx[istations]->SetLineWidth(2);
-        gepsilon1_rx[istations]->Draw("lsame");
+        model_data.gepsilon1_rx[istations]->SetLineColor(icolors[istations]);
+        model_data.gepsilon1_rx[istations]->SetLineWidth(2);
+        model_data.gepsilon1_rx[istations]->Draw("lsame");
 
-        gepsilon2_rx[istations]->SetLineColor(icolors[istations]);
-        gepsilon2_rx[istations]->SetLineWidth(2);
-        gepsilon2_rx[istations]->SetLineStyle(kDashed);
+        model_data.gepsilon2_rx[istations]->SetLineColor(icolors[istations]);
+        model_data.gepsilon2_rx[istations]->SetLineWidth(2);
+        model_data.gepsilon2_rx[istations]->SetLineStyle(kDashed);
 
-        gepsilon1_rx[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gepsilon1_rx[istations]->SetName(geom.snames[istations].c_str());
         legend26->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
     }
@@ -3036,16 +3672,16 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gdiffepsilon_tx[istations]->SetLineColor(icolors[istations]);
-        gdiffepsilon_tx[istations]->SetLineWidth(2);
-        gdiffepsilon_tx[istations]->Draw("lsame");
+        model_data.gdiffepsilon_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gdiffepsilon_tx[istations]->SetLineWidth(2);
+        model_data.gdiffepsilon_tx[istations]->Draw("lsame");
 
         legend24b->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
         if (istations<5){
-            legend26b->AddEntry(gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
+            legend26b->AddEntry(model_data.gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
         }
         else if (istations==5){
-            legend26c->AddEntry(gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
+            legend26c->AddEntry(model_data.gdiffepsilon_rx[istations],geom.snames[istations].c_str(),"l");
         }
     }
 
@@ -3067,9 +3703,9 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gdiffepsilon_rx[istations]->SetLineColor(icolors[istations]);
-        gdiffepsilon_rx[istations]->SetLineWidth(2);
-        gdiffepsilon_rx[istations]->Draw("lsame");
+        model_data.gdiffepsilon_rx[istations]->SetLineColor(icolors[istations]);
+        model_data.gdiffepsilon_rx[istations]->SetLineWidth(2);
+        model_data.gdiffepsilon_rx[istations]->Draw("lsame");
     }
     legend26b->Draw("same");
     legend26c->Draw("same");
@@ -3095,23 +3731,23 @@ int main(int argc, char** argv) {
     c27->cd(1);
     h27a->Draw();
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        gdotShats_tx[istations]->SetLineColor(icolors[istations]);
-        gdotShats_tx[istations]->SetLineWidth(2);
-        gdotShats_tx[istations]->Draw("lsame");
+        model_data.gdotShats_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gdotShats_tx[istations]->SetLineWidth(2);
+        model_data.gdotShats_tx[istations]->Draw("lsame");
     }
     c27->cd(2);
     h27b->Draw();
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        gdotEhats_tx[istations]->SetLineColor(icolors[istations]);
-        gdotEhats_tx[istations]->SetLineWidth(2);
-        gdotEhats_tx[istations]->Draw("lsame");
+        model_data.gdotEhats_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gdotEhats_tx[istations]->SetLineWidth(2);
+        model_data.gdotEhats_tx[istations]->Draw("lsame");
     }
     c27->cd(3);
     h27c->Draw();
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        gdotDhats_tx[istations]->SetLineColor(icolors[istations]);
-        gdotDhats_tx[istations]->SetLineWidth(2);
-        gdotDhats_tx[istations]->Draw("lsame");
+        model_data.gdotDhats_tx[istations]->SetLineColor(icolors[istations]);
+        model_data.gdotDhats_tx[istations]->SetLineWidth(2);
+        model_data.gdotDhats_tx[istations]->Draw("lsame");
     }
     sname=sdir+"dotproducts.pdf";
     c27->Print(sname.c_str());
@@ -3142,17 +3778,17 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c29->cd(istations+1);
         h29a->Draw();
-        gtxdepth_beam1[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_beam1[istations]->SetLineWidth(2);
-        gtxdepth_beam1[istations]->Draw("lsame");
+        model_data.gtxdepth_beam1[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_beam1[istations]->SetLineWidth(2);
+        model_data.gtxdepth_beam1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c29->cd(geom.NSTATIONS+istations+1);
         h29b->Draw();
-        gtxdepth_beam2[istations]->SetLineColor(icolors[istations]);
-        gtxdepth_beam2[istations]->SetLineWidth(2);
-        gtxdepth_beam2[istations]->Draw("lsame");
+        model_data.gtxdepth_beam2[istations]->SetLineColor(icolors[istations]);
+        model_data.gtxdepth_beam2[istations]->SetLineWidth(2);
+        model_data.gtxdepth_beam2[istations]->Draw("lsame");
     }
     sname=sdir+"beams_tx.pdf";
     c29->Print(sname.c_str());
@@ -3170,17 +3806,17 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c30->cd(istations+1);
         h30a->Draw();
-        grxdepth_beam1[istations]->SetLineColor(icolors[istations]);
-        grxdepth_beam1[istations]->SetLineWidth(2);
-        grxdepth_beam1[istations]->Draw("lsame");
+        model_data.grxdepth_beam1[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_beam1[istations]->SetLineWidth(2);
+        model_data.grxdepth_beam1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c30->cd(geom.NSTATIONS+istations+1);
         h30b->Draw();
-        grxdepth_beam2[istations]->SetLineColor(icolors[istations]);
-        grxdepth_beam2[istations]->SetLineWidth(2);
-        grxdepth_beam2[istations]->Draw("lsame");
+        model_data.grxdepth_beam2[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_beam2[istations]->SetLineWidth(2);
+        model_data.grxdepth_beam2[istations]->Draw("lsame");
     }
     sname=sdir+"beams_rx.pdf";
     c30->Print(sname.c_str());
@@ -3193,14 +3829,14 @@ int main(int argc, char** argv) {
     c31->SetLogy();
     h31->Draw();
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
-        grxdepth_atten[istations]->SetLineColor(kGray);
-        grxdepth_atten[istations]->SetLineWidth(2);
-        grxdepth_atten[istations]->Draw("lsame");
+        model_data.grxdepth_atten[istations]->SetLineColor(kGray);
+        model_data.grxdepth_atten[istations]->SetLineWidth(2);
+        model_data.grxdepth_atten[istations]->Draw("lsame");
 
-        grxdepth_atten_beam[istations]->SetLineColor(kGray+1);
-        grxdepth_atten_beam[istations]->SetLineWidth(2);
-        grxdepth_atten_beam[istations]->SetLineStyle(kDashed);
-        grxdepth_atten_beam[istations]->Draw("lsame");
+        model_data.grxdepth_atten_beam[istations]->SetLineColor(kGray+1);
+        model_data.grxdepth_atten_beam[istations]->SetLineWidth(2);
+        model_data.grxdepth_atten_beam[istations]->SetLineStyle(kDashed);
+        model_data.grxdepth_atten_beam[istations]->Draw("lsame");
 
 
     }
@@ -3219,25 +3855,25 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c32->cd(istations+1);
         h32a->Draw();
-        grxdepth_theta1[istations]->SetLineColor(icolors[istations]);
-        grxdepth_theta1[istations]->SetLineWidth(2);
-        grxdepth_theta1[istations]->Draw("lsame");
-        grxdepthE_theta1[istations]->SetLineColor(icolors[istations]);
-        grxdepthE_theta1[istations]->SetLineWidth(2);
-        grxdepthE_theta1[istations]->SetLineStyle(kDashed);
-        grxdepthE_theta1[istations]->Draw("lsame");
+        model_data.grxdepth_theta1[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_theta1[istations]->SetLineWidth(2);
+        model_data.grxdepth_theta1[istations]->Draw("lsame");
+        model_data.grxdepthE_theta1[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepthE_theta1[istations]->SetLineWidth(2);
+        model_data.grxdepthE_theta1[istations]->SetLineStyle(kDashed);
+        model_data.grxdepthE_theta1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c32->cd(geom.NSTATIONS+istations+1);
         h32b->Draw();
-        grxdepth_theta2[istations]->SetLineColor(icolors[istations]);
-        grxdepth_theta2[istations]->SetLineWidth(2);
-        grxdepth_theta2[istations]->Draw("lsame");
-        grxdepthE_theta2[istations]->SetLineColor(icolors[istations]);
-        grxdepthE_theta2[istations]->SetLineWidth(2);
-        grxdepthE_theta2[istations]->SetLineStyle(kDashed);
-        grxdepthE_theta2[istations]->Draw("lsame");
+        model_data.grxdepth_theta2[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_theta2[istations]->SetLineWidth(2);
+        model_data.grxdepth_theta2[istations]->Draw("lsame");
+        model_data.grxdepthE_theta2[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepthE_theta2[istations]->SetLineWidth(2);
+        model_data.grxdepthE_theta2[istations]->SetLineStyle(kDashed);
+        model_data.grxdepthE_theta2[istations]->Draw("lsame");
     }
     sname=sdir+"anglesontheclock_rx.pdf";
     c32->Print(sname.c_str());
@@ -3254,28 +3890,28 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c33->cd(istations+1);
         h33a->Draw();
-        grxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
-        grxdepth_theta1_Sclock[istations]->SetLineWidth(2);
-        grxdepth_theta1_Sclock[istations]->Draw("lsame");
-        grxdepthE_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
-        grxdepthE_theta1_Sclock[istations]->SetLineWidth(2);
-        grxdepthE_theta1_Sclock[istations]->SetLineStyle(kDashed);
-        grxdepthE_theta1_Sclock[istations]->Draw("lsame");
+        model_data.grxdepth_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_theta1_Sclock[istations]->SetLineWidth(2);
+        model_data.grxdepth_theta1_Sclock[istations]->Draw("lsame");
+        model_data.grxdepthE_theta1_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepthE_theta1_Sclock[istations]->SetLineWidth(2);
+        model_data.grxdepthE_theta1_Sclock[istations]->SetLineStyle(kDashed);
+        model_data.grxdepthE_theta1_Sclock[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c33->cd(geom.NSTATIONS+istations+1);
 
-        grxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
-        grxdepth_theta2_Sclock[istations]->SetLineWidth(2);
+        model_data.grxdepth_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepth_theta2_Sclock[istations]->SetLineWidth(2);
 
-        grxdepthE_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
-        grxdepthE_theta2_Sclock[istations]->SetLineWidth(2);
-        grxdepthE_theta2_Sclock[istations]->SetLineStyle(kDashed);
+        model_data.grxdepthE_theta2_Sclock[istations]->SetLineColor(icolors[istations]);
+        model_data.grxdepthE_theta2_Sclock[istations]->SetLineWidth(2);
+        model_data.grxdepthE_theta2_Sclock[istations]->SetLineStyle(kDashed);
 
         h33b->Draw();
-        grxdepth_theta2_Sclock[istations]->Draw("lsame");
-        grxdepthE_theta2_Sclock[istations]->Draw("lsame");
+        model_data.grxdepth_theta2_Sclock[istations]->Draw("lsame");
+        model_data.grxdepthE_theta2_Sclock[istations]->Draw("lsame");
     }
     sname=sdir+"anglesontheSclock_rx.pdf";
     c33->Print(sname.c_str());
@@ -3302,17 +3938,17 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c34->cd(istations+1);
         h34a[istations]->Draw();
-        gpower_r1[istations]->SetLineColor(icolors[istations]);
-        gpower_r1[istations]->SetLineWidth(2);
-        gpower_r1[istations]->Draw("lsame");
+        model_data.gpower_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gpower_r1[istations]->SetLineWidth(2);
+        model_data.gpower_r1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c34->cd(geom.NSTATIONS+istations+1);
         h34b[istations]->Draw();
-        gpower_r2[istations]->SetLineColor(icolors[istations]);
-        gpower_r2[istations]->SetLineWidth(2);
-        gpower_r2[istations]->Draw("lsame");
+        model_data.gpower_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gpower_r2[istations]->SetLineWidth(2);
+        model_data.gpower_r2[istations]->Draw("lsame");
     }
     sname=sdir+"powers.pdf";
     c34->Print(sname.c_str());
@@ -3339,24 +3975,24 @@ int main(int argc, char** argv) {
         c35->cd(istations+1);
         h35a[istations]->Draw();
 
-        gvenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_plus_r1[istations]->SetLineWidth(2);
-        gvenvelope_plus_r1[istations]->Draw("lsame");
-        gvenvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_minus_r1[istations]->SetLineWidth(2);
-        gvenvelope_minus_r1[istations]->Draw("lsame");
+        model_data.gvenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_plus_r1[istations]->SetLineWidth(2);
+        model_data.gvenvelope_plus_r1[istations]->Draw("lsame");
+        model_data.gvenvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_minus_r1[istations]->SetLineWidth(2);
+        model_data.gvenvelope_minus_r1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c35->cd(geom.NSTATIONS+istations+1);
 
         h35b[istations]->Draw();
-        gvenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_plus_r2[istations]->SetLineWidth(2);
-        gvenvelope_plus_r2[istations]->Draw("lsame");
-        gvenvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_minus_r2[istations]->SetLineWidth(2);
-        gvenvelope_minus_r2[istations]->Draw("lsame");
+        model_data.gvenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_plus_r2[istations]->SetLineWidth(2);
+        model_data.gvenvelope_plus_r2[istations]->Draw("lsame");
+        model_data.gvenvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_minus_r2[istations]->SetLineWidth(2);
+        model_data.gvenvelope_minus_r2[istations]->Draw("lsame");
     }
     sname=sdir+"venvelopes.pdf";
     c35->Print(sname.c_str());
@@ -3389,27 +4025,27 @@ int main(int argc, char** argv) {
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c36->cd(istations+1);
         h36a[istations]->Draw();
-        grxdepth_atten[istations]->Draw("lsame");
-        grxdepth_atten_beam[istations]->Draw("lsame");
-        gvenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_plus_r1[istations]->SetLineStyle(kDashed);
-        gvenvelope_plus_r1[istations]->Draw("lsame");
-        gvoltage_r1[istations]->SetLineColor(icolors[istations]);
-        gvoltage_r1[istations]->SetLineWidth(2);
-        gvoltage_r1[istations]->Draw("lsame");
+        model_data.grxdepth_atten[istations]->Draw("lsame");
+        model_data.grxdepth_atten_beam[istations]->Draw("lsame");
+        model_data.gvenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_plus_r1[istations]->SetLineStyle(kDashed);
+        model_data.gvenvelope_plus_r1[istations]->Draw("lsame");
+        model_data.gvoltage_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gvoltage_r1[istations]->SetLineWidth(2);
+        model_data.gvoltage_r1[istations]->Draw("lsame");
     }
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
         c36->cd(geom.NSTATIONS+istations+1);
         h36b[istations]->Draw();
-        grxdepth_atten[istations]->Draw("lsame");
-        grxdepth_atten_beam[istations]->Draw("lsame");
-        gvenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
-        gvenvelope_plus_r2[istations]->SetLineStyle(kDashed);
-        gvenvelope_plus_r2[istations]->Draw("lsame");
-        gvoltage_r2[istations]->SetLineColor(icolors[istations]);
-        gvoltage_r2[istations]->SetLineWidth(2);
-        gvoltage_r2[istations]->Draw("lsame");
+        model_data.grxdepth_atten[istations]->Draw("lsame");
+        model_data.grxdepth_atten_beam[istations]->Draw("lsame");
+        model_data.gvenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gvenvelope_plus_r2[istations]->SetLineStyle(kDashed);
+        model_data.gvenvelope_plus_r2[istations]->Draw("lsame");
+        model_data.gvoltage_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gvoltage_r2[istations]->SetLineWidth(2);
+        model_data.gvoltage_r2[istations]->Draw("lsame");
     }
     sname=sdir+"voltages.pdf";
     c36->Print(sname.c_str());
@@ -3418,10 +4054,10 @@ int main(int argc, char** argv) {
     TCanvas *c36_a5=new TCanvas("c36_a5","c36_a5",800,800);
     h36a[4]->Draw();
     h36a[4]->GetYaxis()->SetRangeUser(0.,25.);
-    grxdepth_atten[4]->Draw("lsame");
-    grxdepth_atten_beam[4]->Draw("lsame");
-    gvenvelope_plus_r1[4]->Draw("lsame");
-    gvoltage_r1[4]->Draw("lsame");
+    model_data.grxdepth_atten[4]->Draw("lsame");
+    model_data.grxdepth_atten_beam[4]->Draw("lsame");
+    model_data.gvenvelope_plus_r1[4]->Draw("lsame");
+    model_data.gvoltage_r1[4]->Draw("lsame");
 
     sname=sdir+"voltages_a5.pdf";
     c36_a5->Print(sname.c_str());
@@ -3469,23 +4105,23 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gvenvelope_plus_r2[istations]->SetLineStyle(kSolid);
-        gvenvelope_minus_r2[istations]->SetLineStyle(kSolid);
-        gvoltage_r2[istations]->SetLineStyle(kDashed);
+        model_data.gvenvelope_plus_r2[istations]->SetLineStyle(kSolid);
+        model_data.gvenvelope_minus_r2[istations]->SetLineStyle(kSolid);
+        model_data.gvoltage_r2[istations]->SetLineStyle(kDashed);
 
         // Skip ARIANNA in these overlays
         if (istations!=5) {
-            gvenvelope_minus_r2[istations]->Draw("lsame");
-            gvenvelope_plus_r2[istations]->Draw("lsame");
-            gvoltage_r2[istations]->Draw("lsame");
+            model_data.gvenvelope_minus_r2[istations]->Draw("lsame");
+            model_data.gvenvelope_plus_r2[istations]->Draw("lsame");
+            model_data.gvoltage_r2[istations]->Draw("lsame");
         }
 
-        gvoltage_r2[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gvoltage_r2[istations]->SetName(geom.snames[istations].c_str());
         legend37->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
         if (istations==0) {
-            legend38b->AddEntry(gvenvelope_plus_r2[istations],"Voltage envelope","l");
-            legend38b->AddEntry(gvoltage_r2[istations],snametemp.c_str(),"l");
+            legend38b->AddEntry(model_data.gvenvelope_plus_r2[istations],"Voltage envelope","l");
+            legend38b->AddEntry(model_data.gvoltage_r2[istations],snametemp.c_str(),"l");
         }
     }
 
@@ -3524,20 +4160,20 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gvenvelope_plus_r1[istations]->SetLineStyle(kSolid);
-        gvenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gvenvelope_plus_r1[istations]->SetLineStyle(kSolid);
+        model_data.gvenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
 
-        gvenvelope_minus_r1[istations]->SetLineStyle(kSolid);
-        gvoltage_r1[istations]->SetLineStyle(kDashed);
+        model_data.gvenvelope_minus_r1[istations]->SetLineStyle(kSolid);
+        model_data.gvoltage_r1[istations]->SetLineStyle(kDashed);
 
         if (istations==0) {
-            gvoltage_r1[istations]->SetName(snametemp.c_str());
+            model_data.gvoltage_r1[istations]->SetName(snametemp.c_str());
         }
 
         if (istations!=5) {
-            gvoltage_r1[istations]->Draw("lsame");
-            gvenvelope_minus_r1[istations]->Draw("lsame");
-            gvenvelope_plus_r1[istations]->Draw("lsame");
+            model_data.gvoltage_r1[istations]->Draw("lsame");
+            model_data.gvenvelope_minus_r1[istations]->Draw("lsame");
+            model_data.gvenvelope_plus_r1[istations]->Draw("lsame");
         }
 
         legend38->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
@@ -3581,28 +4217,28 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gEenvelope_plus_r2[istations]->SetLineStyle(kSolid);
-        gEenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
-        gEenvelope_plus_r2[istations]->SetLineWidth(2);
+        model_data.gEenvelope_plus_r2[istations]->SetLineStyle(kSolid);
+        model_data.gEenvelope_plus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gEenvelope_plus_r2[istations]->SetLineWidth(2);
 
-        gEenvelope_plus_r2[istations]->Draw("lsame");
+        model_data.gEenvelope_plus_r2[istations]->Draw("lsame");
 
-        gEenvelope_minus_r2[istations]->SetLineStyle(kSolid);
-        gEenvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
-        gEenvelope_minus_r2[istations]->SetLineWidth(2);
+        model_data.gEenvelope_minus_r2[istations]->SetLineStyle(kSolid);
+        model_data.gEenvelope_minus_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gEenvelope_minus_r2[istations]->SetLineWidth(2);
 
-        gEenvelope_minus_r2[istations]->Draw("lsame");
+        model_data.gEenvelope_minus_r2[istations]->Draw("lsame");
 
-        gfield_r2[istations]->SetLineStyle(kDashed);
-        gfield_r2[istations]->SetLineColor(icolors[istations]);
-        gfield_r2[istations]->SetLineWidth(2);
-        gfield_r2[istations]->Draw("lsame");
-        gfield_r2[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gfield_r2[istations]->SetLineStyle(kDashed);
+        model_data.gfield_r2[istations]->SetLineColor(icolors[istations]);
+        model_data.gfield_r2[istations]->SetLineWidth(2);
+        model_data.gfield_r2[istations]->Draw("lsame");
+        model_data.gfield_r2[istations]->SetName(geom.snames[istations].c_str());
         legend37b->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
 
         if (istations==0) {
-            legend38c->AddEntry(gEenvelope_plus_r2[istations],"E field envelope","l");
-            legend38c->AddEntry(gfield_r2[istations],snametempb.c_str(),"l");
+            legend38c->AddEntry(model_data.gEenvelope_plus_r2[istations],"E field envelope","l");
+            legend38c->AddEntry(model_data.gfield_r2[istations],snametempb.c_str(),"l");
         }
 
     }
@@ -3639,25 +4275,25 @@ int main(int argc, char** argv) {
 
     for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
 
-        gEenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
-        gEenvelope_plus_r1[istations]->SetLineWidth(2);
-        gEenvelope_plus_r1[istations]->SetLineStyle(kSolid);
-        gEenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
-        gEenvelope_plus_r1[istations]->Draw("lsame");
+        model_data.gEenvelope_plus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gEenvelope_plus_r1[istations]->SetLineWidth(2);
+        model_data.gEenvelope_plus_r1[istations]->SetLineStyle(kSolid);
+        model_data.gEenvelope_plus_r1[istations]->SetName(geom.snames[istations].c_str());
+        model_data.gEenvelope_plus_r1[istations]->Draw("lsame");
 
-        gEenvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
-        gEenvelope_minus_r1[istations]->SetLineWidth(2);
-        gEenvelope_minus_r1[istations]->SetLineStyle(kSolid);
-        gEenvelope_minus_r1[istations]->Draw("lsame");
+        model_data.gEenvelope_minus_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gEenvelope_minus_r1[istations]->SetLineWidth(2);
+        model_data.gEenvelope_minus_r1[istations]->SetLineStyle(kSolid);
+        model_data.gEenvelope_minus_r1[istations]->Draw("lsame");
 
-        gfield_r1[istations]->SetLineStyle(kDashed);
-        gfield_r1[istations]->SetLineColor(icolors[istations]);
-        gfield_r1[istations]->SetLineWidth(2);
+        model_data.gfield_r1[istations]->SetLineStyle(kDashed);
+        model_data.gfield_r1[istations]->SetLineColor(icolors[istations]);
+        model_data.gfield_r1[istations]->SetLineWidth(2);
 
         if (istations==0) {
-            gfield_r1[istations]->SetName(snametemp.c_str());
+            model_data.gfield_r1[istations]->SetName(snametemp.c_str());
         }
-        gfield_r1[istations]->Draw("lsame");
+        model_data.gfield_r1[istations]->Draw("lsame");
 
         legend38d->AddEntry(geom.snames[istations].c_str(),geom.snames[istations].c_str(),"l");
     }
@@ -3683,17 +4319,17 @@ int main(int argc, char** argv) {
         c40->cd(istations+1);
         h40a->Draw();
 
-        gpolarization_Omega_rx[istations]->SetLineColor(icolors[istations]);
-        gpolarization_Omega_rx[istations]->SetLineStyle(kSolid);
-        gpolarization_Omega_rx[istations]->Draw("lsame");
+        model_data.gpolarization_Omega_rx[istations]->SetLineColor(icolors[istations]);
+        model_data.gpolarization_Omega_rx[istations]->SetLineStyle(kSolid);
+        model_data.gpolarization_Omega_rx[istations]->Draw("lsame");
 
     }
     for (int istations=0;istations<geom.NSTATIONS;istations++) {
         c40->cd(geom.NSTATIONS+istations+1);
         h40b->Draw();
-        gpolarization_Psi_rx[istations]->SetLineColor(icolors[istations]);
-        gpolarization_Psi_rx[istations]->SetLineStyle(kSolid);
-        gpolarization_Psi_rx[istations]->Draw("lsame");
+        model_data.gpolarization_Psi_rx[istations]->SetLineColor(icolors[istations]);
+        model_data.gpolarization_Psi_rx[istations]->SetLineStyle(kSolid);
+        model_data.gpolarization_Psi_rx[istations]->Draw("lsame");
 
     }
 
@@ -3714,10 +4350,10 @@ int main(int argc, char** argv) {
     h41->GetYaxis()->SetTitleOffset(1.45);
     h41->Draw();
 
-    gpolarization_reversedepth_Psi_rx[5]->SetLineColor(kBlack);
-    gpolarization_reversedepth_Psi_rx[5]->SetLineStyle(kSolid);
-    gpolarization_reversedepth_Psi_rx[5]->SetLineWidth(3);
-    gpolarization_reversedepth_Psi_rx[5]->Draw("lsame");
+    model_data.gpolarization_reversedepth_Psi_rx[5]->SetLineColor(kBlack);
+    model_data.gpolarization_reversedepth_Psi_rx[5]->SetLineStyle(kSolid);
+    model_data.gpolarization_reversedepth_Psi_rx[5]->SetLineWidth(3);
+    model_data.gpolarization_reversedepth_Psi_rx[5]->Draw("lsame");
 
     sname=sdir+"polarization_arianna.pdf";
     c41->Print(sname.c_str());
@@ -3749,48 +4385,48 @@ int main(int argc, char** argv) {
     for (int istations=0;istations<geom.NSTATIONS;istations++) {
 
         // Receiver polarization angle Psi vs reversed depth
-        sprintf(name,"gpolarization_reversedepth_Psi_rx_%d",istations);
-        gpolarization_reversedepth_Psi_rx[istations]->Write(name);
+        sprintf(name,"model_data.gpolarization_reversedepth_Psi_rx_%d",istations);
+        model_data.gpolarization_reversedepth_Psi_rx[istations]->Write(name);
         
         // Same, but for field-based polarization instead of voltage-based        
-        sprintf(name,"gEpolarization_reversedepth_Psi_rx_%d",istations);
-        gEpolarization_reversedepth_Psi_rx[istations]->Write(name);
+        sprintf(name,"model_data.gEpolarization_reversedepth_Psi_rx_%d",istations);
+        model_data.gEpolarization_reversedepth_Psi_rx[istations]->Write(name);
 
         // Final voltage amplitudes in receiver channels r1 and r2
-        sprintf(name,"gvoltage_r1_%d",istations);
-        gvoltage_r1[istations]->Write(name);
+        sprintf(name,"model_data.gvoltage_r1_%d",istations);
+        model_data.gvoltage_r1[istations]->Write(name);
 
-        sprintf(name,"gvoltage_r2_%d",istations);
-        gvoltage_r2[istations]->Write(name);
+        sprintf(name,"model_data.gvoltage_r2_%d",istations);
+        model_data.gvoltage_r2[istations]->Write(name);
         
         // Attenuation-only and attenuation×beam transfer factors
-        sprintf(name,"grxdepth_atten_%d",istations);
-        grxdepth_atten[istations]->Write(name);
+        sprintf(name,"model_data.grxdepth_atten_%d",istations);
+        model_data.grxdepth_atten[istations]->Write(name);
 
-        sprintf(name,"grxdepth_atten_beam_%d",istations);
-        grxdepth_atten_beam[istations]->Write(name);
+        sprintf(name,"model_data.grxdepth_atten_beam_%d",istations);
+        model_data.grxdepth_atten_beam[istations]->Write(name);
 
         // Constructive voltage envelope in channel r1
-        sprintf(name,"gvenvelope_plus_r1_%d",istations);
-        gvenvelope_plus_r1[istations]->Write(name);
+        sprintf(name,"model_data.gvenvelope_plus_r1_%d",istations);
+        model_data.gvenvelope_plus_r1[istations]->Write(name);
 
         // Store spectra for a fixed list of "special" pulser depths
         for (int ispecial=0;ispecial<geom.NSPECIAL;ispecial++) {
             sprintf(name,"g_spectra_%d_%d",istations,ispecial);
-            g_spectra[istations][(int)g_idepth[istations]->Eval(geom.whichspecial[ispecial])]->Write(name);
+            g_spectra[istations][(int)model_data.g_idepth[istations]->Eval(geom.whichspecial[ispecial])]->Write(name);
         }
 
         // Constructive voltage envelope in channel r2
-        sprintf(name,"gvenvelope_plus_r2_%d",istations);
-        gvenvelope_plus_r2[istations]->Write(name);
+        sprintf(name,"model_data.gvenvelope_plus_r2_%d",istations);
+        model_data.gvenvelope_plus_r2[istations]->Write(name);
 
         // Final voltage in r2 is written again here (same object as above)
-        sprintf(name,"gvoltage_r2_%d",istations);
-        gvoltage_r2[istations]->Write(name);
+        sprintf(name,"model_data.gvoltage_r2_%d",istations);
+        model_data.gvoltage_r2[istations]->Write(name);
 
         // Final field amplitude in r2
-        sprintf(name,"gfield_r2_%d",istations);
-        gfield_r2[istations]->Write(name);
+        sprintf(name,"model_data.gfield_r2_%d",istations);
+        model_data.gfield_r2[istations]->Write(name);
 
         // Final field amplitude in r2
         sprintf(name,"g_atten_power_%d",istations);
@@ -3800,35 +4436,35 @@ int main(int argc, char** argv) {
         g_atten_beam_power[istations]->Write(name);
 
         // Final field amplitude in r2
-        sprintf(name,"gV1squared_r1_%d",istations);
-        gV1squared_r1[istations]->Write(name);
+        sprintf(name,"model_data.gV1squared_r1_%d",istations);
+        model_data.gV1squared_r1[istations]->Write(name);
 
-        sprintf(name,"gV2squared_r1_%d",istations);
-        gV2squared_r1[istations]->Write(name);
+        sprintf(name,"model_data.gV2squared_r1_%d",istations);
+        model_data.gV2squared_r1[istations]->Write(name);
 
-        sprintf(name,"gV1V2_r1_%d",istations);
-        gV1V2_r1[istations]->Write(name);
-
-        // Final field amplitude in r2
-        sprintf(name,"gV1V2_r2_%d",istations);
-        gV1V2_r2[istations]->Write(name);
-
-        sprintf(name,"gV1squared_r2_%d",istations);
-        gV1squared_r2[istations]->Write(name);
-
-        sprintf(name,"gV2squared_r2_%d",istations);
-        gV2squared_r2[istations]->Write(name);
+        sprintf(name,"model_data.gV1V2_r1_%d",istations);
+        model_data.gV1V2_r1[istations]->Write(name);
 
         // Final field amplitude in r2
-        sprintf(name,"goppositeV1V2_r2_%d",istations);
-        goppositeV1V2_r2[istations]->Write(name);
+        sprintf(name,"model_data.gV1V2_r2_%d",istations);
+        model_data.gV1V2_r2[istations]->Write(name);
 
-        sprintf(name,"goppositeV1V2_r1_%d",istations);
-        goppositeV1V2_r1[istations]->Write(name);
+        sprintf(name,"model_data.gV1squared_r2_%d",istations);
+        model_data.gV1squared_r2[istations]->Write(name);
+
+        sprintf(name,"model_data.gV2squared_r2_%d",istations);
+        model_data.gV2squared_r2[istations]->Write(name);
+
+        // Final field amplitude in r2
+        sprintf(name,"model_data.goppositeV1V2_r2_%d",istations);
+        model_data.goppositeV1V2_r2[istations]->Write(name);
+
+        sprintf(name,"model_data.goppositeV1V2_r1_%d",istations);
+        model_data.goppositeV1V2_r1[istations]->Write(name);
 
         // Debug printout of channel-r2 interference terms at a reference depth
-        int idepth_temp=g_idepth[istations]->Eval(-1000.);
-        cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << istations << "\t" << data.vV1squared_r2[istations][idepth_temp] << "\t" << data.vV2squared_r2[istations][idepth_temp] << "\t" << data.vV1V2_r2[istations][idepth_temp] << "\n";
+        int idepth_temp=model_data.g_idepth[istations]->Eval(-1000.);
+        cout << "station, depth, V1squared_r2, V2squared_r2, V1V2_r2 are " << istations << "\t" << model_data.vV1squared_r2[istations][idepth_temp] << "\t" << model_data.vV2squared_r2[istations][idepth_temp] << "\t" << model_data.vV1V2_r2[istations][idepth_temp] << "\n";
 
     }
 

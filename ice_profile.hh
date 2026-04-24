@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 #include "config.hh"
+#include "birefringence.hh"
 
 struct Ice_Profile{
 
@@ -24,6 +25,11 @@ struct Ice_Profile{
   Ice_Profile(const Config& cfg, const std::vector<double>& nvec);
 
   void smooth_indices(std::vector<double>& n_vec); 
+  // Declare some TGraphs for storing data
+  TGraph* gn1 = nullptr;
+  TGraph* gn2 = nullptr;
+  TGraph* gn3 = nullptr;
+  TGraph* g_V = nullptr;
 
 };
 

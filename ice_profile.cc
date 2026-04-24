@@ -3,6 +3,7 @@
 #include "constants.hh"
 #include "ice_profile.hh"
 #include "config.hh"
+#include "birefringence.hh"
 
 using namespace std;
 
@@ -65,6 +66,27 @@ Ice_Profile::Ice_Profile(const Config& cfg, const vector<double>& nvec) {
   smooth_indices(n1vec);
   smooth_indices(n2vec);
   smooth_indices(n3vec);
+
+  // Fill our TGraphs based on the smoothed indices
+  gn1=new TGraph(n1vec.size(),&vdepths_n1[0],&n1vec[0]);
+  gn2=new TGraph(n2vec.size(),&vdepths_n2[0],&n2vec[0]);
+  gn3=new TGraph(n3vec.size(),&vdepths_n3[0],&n3vec[0]);
+
+  // Compute derived quantity V(z) from the birefringence model (getV in birefringence.hh)
+  vector<double> nvec_tmp;
+  nvec_tmp.resize(3);
+
+  for (int i=0;i<n1vec.size();i++) {
+    // Evaluate indices at each depth (using the smoothed/interpolated curves)
+    nvec_tmp[0]=gn1->Eval(vdepths_n1[i]);
+    nvec_tmp[1]=gn2->Eval(vdepths_n2[i]);
+    nvec_tmp[2]=gn3->Eval(vdepths_n3[i]);
+    vV.push_back(getV(nvec_tmp));
+  }
+
+  // Graph of V(z)
+  g_V=new TGraph(vdepths_n1.size(),&vdepths_n1[0],&vV[0]);
+
 }
 
 void Ice_Profile::smooth_indices(std::vector<double>& n_vec) {
