@@ -36,64 +36,29 @@ using namespace std;
 #define CYAN    "\x1b[36m"
 #endif
 
-void process_station(const Config& cfg, Geometry& geom, Ice_Profile& ice,
-                     StationData& model_data, int i,
-                     TVector3& p_e1, TVector3& p_e2, double& n_e1, double& n_e2,
-                     bool SKIP_MIDDLE_STEPS, bool SKIP_RAYTRACE_PATH,
-                     PsiTiming& timing) {
+// ---------------------------------------------------------------------------
+// process_pulser_depth
+//
+// One pulser-depth iteration of the per-station loop: ray-trace from this
+// pulser depth to station i, transport the two birefringent eigenmodes along
+// the path, and fill the per-depth StationData observables. p_e1/p_e2/n_e1/n_e2
+// carry eigenmode state across calls. Extracted verbatim from the idepth loop
+// body of process_station().
+// ---------------------------------------------------------------------------
+static void process_pulser_depth(const Config& cfg, Geometry& geom, Ice_Profile& ice,
+                                 StationData& model_data, int i, int idepth,
+                                 TVector3& p_e1, TVector3& p_e2, double& n_e1, double& n_e2,
+                                 bool SKIP_MIDDLE_STEPS, bool SKIP_RAYTRACE_PATH,
+                                 PsiTiming& timing,
+                                 std::chrono::system_clock::time_point overhead_before) {
 
     using clock = std::chrono::system_clock;
     using sec   = std::chrono::duration<double>;
 
-    // Distance-domain "big picture" scan parameters (were main() locals).
-    const int NDISTANCES_BIGPIC=5000;
-    const double STEP=1.;
-    int jmin[geom.NSTATIONS];
-
-    // Bind the timing accumulators to the names used by the moved loop body.
     double& uzair_time = timing.uzair_time;
     double& overhead   = timing.overhead;
-    double& loop_time  = timing.loop_time;
     double& eval_time  = timing.eval_time;
     double& ray_time   = timing.ray_time;
-
-    // ===================== begin moved per-station body =====================
-	const auto overhead_before = clock::now(); 
-        model_data.vmag_atten_beam[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_atten_beam_crosspol[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_atten_beam_crosspol_nointerferencefunc[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_atten_beam_crosspol_func[i].resize(model_data.vdepth[i].size());
-        model_data.vspectra[i].resize(model_data.vdepth[i].size());
-        model_data.vattens[i].resize(model_data.vdepth[i].size());
-        model_data.g_spectra[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_atten[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_parameter0[i].resize(model_data.vdepth[i].size());
-        model_data.vmag_func_noadjust[i].resize(model_data.vdepth[i].size());
-
-        // Measured data vectors only exist for A1-A5, not ARIANNA
-        if (i!=5) {
-            model_data.vtotal_distances[i].resize(model_data.vdepth_data[i].size());
-            model_data.vtotal_distances_err[i].resize(model_data.vdepth_data[i].size());
-        }
-    
-        // Smallest possible source-receiver separation is the horizontal distance
-        double mindistance=geom.horizontal_distances[i];
-        jmin[i]=(int)(mindistance/STEP);
-
-        // Build a distance scan and convert each distance into an equivalent
-        // pseudo-depth for plotting/model-comparison purposes.
-        for (int j=jmin[i]+1;j<NDISTANCES_BIGPIC;j++) {
-            double thisdistance=STEP*(double)j;
-            model_data.vdistances_bigpic[i].push_back(thisdistance);
-            model_data.vpseudodepths_bigpic[i].push_back(geom.station_depths[i]-1.*sqrt(thisdistance*thisdistance-mindistance*mindistance));
-
-        }
-
-        // --------------------------------------------------------------------
-        // Loop over all pulser depths for this station
-        // --------------------------------------------------------------------
-        const auto before = clock::now();
-        for (int idepth=0;idepth<model_data.vdepth[i].size();idepth++) {
 
             // Reduced 2D geometry for ray tracing:
             // x = horizontal separation, z = depth
@@ -1264,6 +1229,67 @@ void process_station(const Config& cfg, Geometry& geom, Ice_Profile& ice,
 		    }
 
 		    model_data.rhat_receive[i].SetMag(1.);
+}
+
+void process_station(const Config& cfg, Geometry& geom, Ice_Profile& ice,
+                     StationData& model_data, int i,
+                     TVector3& p_e1, TVector3& p_e2, double& n_e1, double& n_e2,
+                     bool SKIP_MIDDLE_STEPS, bool SKIP_RAYTRACE_PATH,
+                     PsiTiming& timing) {
+
+    using clock = std::chrono::system_clock;
+    using sec   = std::chrono::duration<double>;
+
+    // Distance-domain "big picture" scan parameters (were main() locals).
+    const int NDISTANCES_BIGPIC=5000;
+    const double STEP=1.;
+    int jmin[geom.NSTATIONS];
+
+    // Per-station idepth-loop timing accumulator (other timing fields are
+    // accumulated inside process_pulser_depth).
+    double& loop_time  = timing.loop_time;
+
+    // ===================== begin moved per-station body =====================
+	const auto overhead_before = clock::now(); 
+        model_data.vmag_atten_beam[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_atten_beam_crosspol[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_atten_beam_crosspol_nointerferencefunc[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_atten_beam_crosspol_func[i].resize(model_data.vdepth[i].size());
+        model_data.vspectra[i].resize(model_data.vdepth[i].size());
+        model_data.vattens[i].resize(model_data.vdepth[i].size());
+        model_data.g_spectra[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_atten[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_parameter0[i].resize(model_data.vdepth[i].size());
+        model_data.vmag_func_noadjust[i].resize(model_data.vdepth[i].size());
+
+        // Measured data vectors only exist for A1-A5, not ARIANNA
+        if (i!=5) {
+            model_data.vtotal_distances[i].resize(model_data.vdepth_data[i].size());
+            model_data.vtotal_distances_err[i].resize(model_data.vdepth_data[i].size());
+        }
+    
+        // Smallest possible source-receiver separation is the horizontal distance
+        double mindistance=geom.horizontal_distances[i];
+        jmin[i]=(int)(mindistance/STEP);
+
+        // Build a distance scan and convert each distance into an equivalent
+        // pseudo-depth for plotting/model-comparison purposes.
+        for (int j=jmin[i]+1;j<NDISTANCES_BIGPIC;j++) {
+            double thisdistance=STEP*(double)j;
+            model_data.vdistances_bigpic[i].push_back(thisdistance);
+            model_data.vpseudodepths_bigpic[i].push_back(geom.station_depths[i]-1.*sqrt(thisdistance*thisdistance-mindistance*mindistance));
+
+        }
+
+        // --------------------------------------------------------------------
+        // Loop over all pulser depths for this station
+        // --------------------------------------------------------------------
+        const auto before = clock::now();
+        for (int idepth=0;idepth<model_data.vdepth[i].size();idepth++) {
+            process_pulser_depth(cfg, geom, ice, model_data, i, idepth,
+                                 p_e1, p_e2, n_e1, n_e2,
+                                 SKIP_MIDDLE_STEPS, SKIP_RAYTRACE_PATH,
+                                 timing, overhead_before);
 		}
 
 		const sec loop_duration = clock::now() - before;
