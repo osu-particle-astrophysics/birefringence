@@ -1,0 +1,46 @@
+# Build cpol.exe
+
+CCFILE  := cpol_main.cc birefringence.cc config.cc geometry.cc ice_profile.cc antenna_measurements.cc station_data.cc
+SCRATCH := tmp.cc
+OBJ     := cpol.o
+EXE     := cpol.exe
+
+CXX := g++
+
+# ---- ROOT: prefer root-config from PATH
+ROOTCFLAGS := $(shell root-config --cflags 2>/dev/null)
+ROOTLIBS   := $(shell root-config --libs   2>/dev/null)
+
+# If root-config is not on PATH, fall back to the ARA CVMFS one (edit if yours differs)
+ifeq ($(strip $(ROOTCFLAGS)),)
+  ROOTCONFIG := /cvmfs/ara.opensciencegrid.org/trunk/alma9/misc_build/bin/root-config
+  ROOTCFLAGS := $(shell $(ROOTCONFIG) --cflags)
+  ROOTLIBS   := $(shell $(ROOTCONFIG) --libs)
+endif
+
+# ---- GSL
+GSLINC := -I$(GSLDIR)/include
+GSLLIB := -L$(GSLDIR)/lib -lgsl -lgslcblas
+
+# ---- Flags
+CXXFLAGS := -O3 -pg -Wall -fPIC $(ROOTCFLAGS) $(GSLINC) -Wno-error -Wno-unused-variable -w
+LDFLAGS  := -O3 -pg
+LIBS     := $(ROOTLIBS) -lMinuit $(GSLLIB)
+
+# ---- ADD OPEN MP
+CXXFLAGS += -fopenmp
+LDFLAGS  += -fopenmp
+
+all: $(EXE)
+
+$(SCRATCH): $(CCFILE)
+	cat $(CCFILE) > $(SCRATCH)
+
+$(OBJ): $(SCRATCH)
+	$(CXX) $(CXXFLAGS) -c $(SCRATCH) -o $(OBJ)
+
+$(EXE): $(OBJ)
+	$(CXX) $(LDFLAGS) $(OBJ) $(LIBS) -o $(EXE)
+
+clean:
+	rm -f $(OBJ) $(SCRATCH) $(EXE) core
