@@ -99,22 +99,6 @@ int main(int argc, char** argv) {
 	// (epsilon/Psi/Omega) are valid. sumphase, atten, beam factors are zeroed.
 	const bool SKIP_RAYTRACE_PATH = true;
 
-    // ------------------------------------------------------------------------
-    // Build dielectric tensor epsilon and its inverse from principal indices.
-    // Here epsilon is represented as a TVector3 holding diagonal elements
-    // (epsilon_x, epsilon_y, epsilon_z) in the principal basis.
-    // ------------------------------------------------------------------------
-    TVector3 inverse_epsilon;
-    inverse_epsilon[0]=1/(nvec[0]*nvec[0]);
-    inverse_epsilon[1]=1/(nvec[1]*nvec[1]);
-    inverse_epsilon[2]=1/(nvec[2]*nvec[2]);
-
-    TVector3 epsilon;
-    epsilon[0]=nvec[0]*nvec[0];
-    epsilon[1]=nvec[1]*nvec[1];
-    epsilon[2]=nvec[2]*nvec[2];
-
-
     // Get the station geometry using these nvecs
     geom.compute_station_geometry(cfg.BIAXIAL, nvec, cfg.phi, cfg.theta, cfg.gamma);
     // Initialize lots of vectors for data
@@ -185,53 +169,8 @@ int main(int argc, char** argv) {
     }
 
     // ------------------------------------------------------------------------
-    // Fit / model functions and graphs used later for comparing the predicted
-    // interference/attenuation envelopes to the measured model_data.
+    // Distance-domain "big picture" scan parameters (per-station pseudo-depths).
     // ------------------------------------------------------------------------
-
-    TF1 *f1[geom.NSTATIONS];
-
-    TF1 *f1_nointerference[geom.NSTATIONS];
-    TF1 *f1_distances[geom.NSTATIONS];
-    TF1 *f1_nointerference_distances[geom.NSTATIONS];
-    TGraph *g1_distances[geom.NSTATIONS];
-    TGraph *g_atten_beam_distances[geom.NSTATIONS];
-    TGraph *g_atten_beam_crosspol_distances[geom.NSTATIONS];
-    TGraph *g_atten_beam_crosspol_nointerferencefunc_distances[geom.NSTATIONS];
-    TGraph *g_atten_beam_crosspol_func_distances[geom.NSTATIONS];
-
-    TGraph *g_sumphase_distances[geom.NSTATIONS];
-
-    // Diagnostic / output spectra are later written out for selected depths
-    const int NSPECIALDEPTHS=2;
-
-    double specialdepths[NSPECIALDEPTHS]={-850.,-875.};
-
-    // g_spectra[station][depth_index] will hold the frequency spectrum
-//    vector< vector<TGraph*> > g_spectra;
-//
-//    g_spectra.resize(geom.NSTATIONS);
-    string sfunc;
-
-    // Envelope with interference term
-    // [0] is an overall scale
-    // [1], [2] are the two contributions
-    // [3] is the interference product term
-    // [4] is the phase
-    sfunc="[0]*sqrt(([1]+[2])*([1]+[2])-2*[3]*sin([4])*sin([4]))";
-
-    string sfunc_nointerference;
-    // Same envelope, but dropping interference
-    sfunc_nointerference="[0]*sqrt(([1]+[2])*([1]+[2]))";
-
-
-    string sfunc_distances;
-    sfunc_distances="[0]*sqrt(([1]+[2])*([1]+[2])-2*[3]*sin([4])*sin([4]))";
-
-
-    string sfunc_nointerference_distances;
-    sfunc_nointerference_distances="[0]*sqrt(([1]+[2])*([1]+[2]))";
-
     const int NDISTANCES_BIGPIC=5000;
     const double STEP=1.;
 
@@ -289,10 +228,6 @@ int main(int argc, char** argv) {
             model_data.vpseudodepths_bigpic[i].push_back(geom.station_depths[i]-1.*sqrt(thisdistance*thisdistance-mindistance*mindistance));
 
         }
-
-        // TF1 wrappers used later to draw or fit the interference model
-        f1[i]=new TF1("f1",sfunc.c_str(),-2000.,-100.);
-        f1_nointerference[i]=new TF1("f1_nointerference",sfunc_nointerference.c_str(),-2000.,-100.);
 
         // --------------------------------------------------------------------
         // Loop over all pulser depths for this station
