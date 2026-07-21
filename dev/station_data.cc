@@ -178,6 +178,7 @@ void plot_epsilons_tx_rx(const Geometry& geom, StationData& model_data) {
     // Side-by-side plot of transmitted (left) and received (right) epsilon_1
     string sdir_e = "output_plots/";
     gSystem->mkdir(sdir_e.c_str(), true);
+    gStyle->SetOptStat(0);
 
     TCanvas *c = new TCanvas("c_tx_rx", "c_tx_rx", 1600, 800);
     c->Divide(2, 1);
@@ -187,7 +188,7 @@ void plot_epsilons_tx_rx(const Geometry& geom, StationData& model_data) {
     gPad->SetLeftMargin(0.15);
     gPad->SetBottomMargin(0.15);
     gPad->SetRightMargin(0.01);
-    TH2D *hL = new TH2D("hL", "", 100, 600., 1600., 100, 0., 91.0);
+    TH2D *hL = new TH2D("hL", "", 100, 600., 1600., 100, -10., 70.0);
     titles(hL, "", "Pulser height (m)", "#epsilon_{ 1}^{ T} (degrees)");
     hL->GetXaxis()->SetNdivisions(504);
     hL->GetYaxis()->SetNdivisions(504);
