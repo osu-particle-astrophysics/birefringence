@@ -1,6 +1,6 @@
 # Build cpol.exe
 
-CCFILE  := cpol_main.cc birefringence.cc config.cc geometry.cc ice_profile.cc antenna_measurements.cc
+CCFILE  := cpol_main.cc psi_model.cc birefringence.cc config.cc geometry.cc ice_profile.cc antenna_measurements.cc station_data.cc cpol_helpers.cc
 SCRATCH := tmp.cc
 OBJ     := cpol.o
 EXE     := cpol.exe

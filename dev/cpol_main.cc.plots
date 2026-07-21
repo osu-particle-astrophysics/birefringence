@@ -14,6 +14,7 @@ This code describes the effects of birefringence at the South Pole
 #include "TGaxis.h"
 #include "TRandom3.h"
 #include "TCanvas.h"
+#include "TROOT.h"
 
 #include <iostream>
 #include <fstream>
@@ -1371,7 +1372,7 @@ int main(int argc, char** argv) {
 
 		    model_data.rhat_receive[i].SetMag(1.);
 		}
-        
+/*        
         // MACHTAY LOOK HERE
         // Test if we can just look at end points
         // Get list of everything we'll be cutting out by just using end points
@@ -2340,6 +2341,7 @@ int main(int argc, char** argv) {
 		    model_data.rhat_receive[i].SetMag(1.);
 		}
     }
+    */
 		const sec loop_duration = clock::now() - before;
 		loop_time += static_cast<double>( loop_duration.count() );
 		// --------------------------------------------------------------------
@@ -2498,6 +2500,7 @@ int main(int argc, char** argv) {
 	    string filename;
 
 	    // MACHTAY: End function here (skip plotting)
+    gROOT->SetBatch(true);  // prevent hang in headless environment
     cout.clear();
     const sec duration = clock::now() - start;
     std::cout << "Uzair time: " << uzair_time << "s" << std::endl;
@@ -2506,6 +2509,75 @@ int main(int argc, char** argv) {
     std::cout << "Raytracing time: " << ray_time << "s" << std::endl;
     std::cout << "idepth loop duration: " << loop_time << "s" << std::endl;
     std::cout << "Total duration: " << duration.count() << "s" << std::endl;
+
+    // MACHTAY: Reproduce Fig. 6 -- epsilon_1^T and epsilon_1^R vs pulser height, all stations
+    {
+        const int NAXIAL_e=3;
+        const int NCONSTANT_e=2;
+        string sbiaxial_e[NAXIAL_e]={"isotropic_","uniaxial_",""};
+        string sconstant_e[NCONSTANT_e]={"","constant_"};
+        string sdir_e="cpol_main_plots_" + sconstant_e[cfg.CONSTANTINDICATRIX] + sbiaxial_e[cfg.BIAXIAL+1] + to_string((int)(freq/1.E6)) + "MHz_angletx" + to_string(cfg.CROSSPOLANGLE_TX_INT) + "_anglerx" + to_string(cfg.CROSSPOLANGLE_RX_INT) + "/";
+        gSystem->mkdir(sdir_e.c_str(), true);
+
+        TCanvas *cfig6 = new TCanvas("cfig6","cfig6",1600,800);
+        cfig6->Divide(2,1);
+
+        // Left panel: epsilon_1^T (TX side)
+        cfig6->cd(1);
+        gPad->SetLeftMargin(0.15);
+        gPad->SetBottomMargin(0.15);
+        gPad->SetRightMargin(0.01);
+        TH2D *hfig6a = new TH2D("hfig6a","",100,-1600.,-600.,100,-10.,70.);
+        titles(hfig6a, "", "Pulser height (m)", "#epsilon_{ 1}^{ T} (degrees)");
+        hfig6a->GetXaxis()->SetNdivisions(504);
+        hfig6a->GetYaxis()->SetNdivisions(504);
+        hfig6a->Draw();
+
+        auto legT = new TLegend(0.18,0.55,0.45,0.88);
+        legT->SetBorderSize(0);
+        legT->SetTextSize(0.04);
+
+        for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+            model_data.gepsilon1_tx[istations]->SetLineColor(icolors[istations]);
+            model_data.gepsilon1_tx[istations]->SetLineWidth(2);
+            model_data.gepsilon1_tx[istations]->SetLineStyle(kSolid);
+            model_data.gepsilon1_tx[istations]->Draw("lsame");
+            model_data.gepsilon1_tx[istations]->SetName(geom.snames[istations].c_str());
+            legT->AddEntry(geom.snames[istations].c_str(), geom.snames[istations].c_str(), "l");
+        }
+        //legT->Draw("same");
+
+        // Right panel: epsilon_1^R (RX side)
+        cfig6->cd(2);
+        gPad->SetLeftMargin(0.15);
+        gPad->SetBottomMargin(0.15);
+        gPad->SetRightMargin(0.01);
+        TH2D *hfig6b = new TH2D("hfig6b","",100,-1600.,-600.,100,-10.,70.);
+        titles(hfig6b, "", "Pulser height (m)", "#epsilon_{ 1}^{ R} (degrees)");
+        hfig6b->GetXaxis()->SetNdivisions(504);
+        hfig6b->GetYaxis()->SetNdivisions(504);
+        hfig6b->Draw();
+
+        auto legR = new TLegend(0.55,0.55,0.88,0.88);
+        legR->SetBorderSize(0);
+        legT->SetFillStyle(0);
+        legR->SetTextSize(0.04);
+
+        for (int istations=geom.minstation;istations<=geom.maxstation;istations++) {
+            model_data.gepsilon1_rx[istations]->SetLineColor(icolors[istations]);
+            model_data.gepsilon1_rx[istations]->SetLineWidth(2);
+            model_data.gepsilon1_rx[istations]->SetLineStyle(kSolid);
+            model_data.gepsilon1_rx[istations]->Draw("lsame");
+            model_data.gepsilon1_rx[istations]->SetName(geom.snames[istations].c_str());
+            legR->AddEntry(geom.snames[istations].c_str(), geom.snames[istations].c_str(), "l");
+        }
+        legR->Draw("same");
+
+        string sname_fig6 = sdir_e + "fig6_epsilons.pdf";
+        cfig6->Print(sname_fig6.c_str());
+        std::cout << "Printed Fig. 6 reproduction to: " << sname_fig6 << std::endl;
+        delete cfig6;
+    }
 
     return 0;
 

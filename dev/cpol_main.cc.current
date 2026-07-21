@@ -1371,7 +1371,7 @@ int main(int argc, char** argv) {
 
 		    model_data.rhat_receive[i].SetMag(1.);
 		}
-        
+       /* 
         // MACHTAY LOOK HERE
         // Test if we can just look at end points
         // Get list of everything we'll be cutting out by just using end points
@@ -2339,7 +2339,7 @@ int main(int argc, char** argv) {
 
 		    model_data.rhat_receive[i].SetMag(1.);
 		}
-    }
+    }*/
 		const sec loop_duration = clock::now() - before;
 		loop_time += static_cast<double>( loop_duration.count() );
 		// --------------------------------------------------------------------
@@ -2507,7 +2507,7 @@ int main(int argc, char** argv) {
     std::cout << "idepth loop duration: " << loop_time << "s" << std::endl;
     std::cout << "Total duration: " << duration.count() << "s" << std::endl;
 
-    return 0;
+    //return 0;
 
     TGraph *g1[geom.NSTATIONS];
 

@@ -1,0 +1,11 @@
+# Build artifacts
+tmp.cc
+cpol.o
+cpol.exe
+core
+gmon.out
+
+# Generated run outputs
+DirectRay.txt
+RefractedRay.txt
+cpol_main_plots_*/
